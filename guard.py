@@ -117,15 +117,91 @@ def cmd_deps(args: list[str]) -> int:
 # ---------------------------------------------------------------------------
 # install / uninstall: reuse the bundled installer for this OS
 # ---------------------------------------------------------------------------
+def _self_exe() -> str:
+    """Path used to launch this agent in a service unit."""
+    if getattr(sys, "frozen", False):
+        return sys.executable                      # the installed `guard` binary
+    return f"{sys.executable} {Path(__file__).resolve()}"   # dev fallback
+
+
+LAUNCHD_LABEL = "me.syedbipul.guard"
+LAUNCHD_PLIST = f"/Library/LaunchDaemons/{LAUNCHD_LABEL}.plist"
+SYSTEMD_UNIT = "/etc/systemd/system/guard.service"
+
+
+def _install_macos(uninstall: bool) -> int:
+    if uninstall:
+        subprocess.call(["launchctl", "bootout", "system", LAUNCHD_PLIST])
+        try: os.remove(LAUNCHD_PLIST)
+        except OSError: pass
+        print("guard: launchd daemon removed"); return 0
+    home = os.environ.get("GUARD_HOME", "/var/lib/guard")
+    Path(home).mkdir(parents=True, exist_ok=True)
+    exe = _self_exe()
+    plist = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>{LAUNCHD_LABEL}</string>
+  <key>ProgramArguments</key><array>{"".join(f"<string>{a}</string>" for a in exe.split())}<string>watch</string></array>
+  <key>EnvironmentVariables</key><dict><key>GUARD_HOME</key><string>{home}</string></dict>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>{home}/watcher.out.log</string>
+  <key>StandardErrorPath</key><string>{home}/watcher.err.log</string>
+</dict></plist>'''
+    try:
+        Path(LAUNCHD_PLIST).write_text(plist)
+    except PermissionError:
+        print("guard install needs root (run with sudo)", file=sys.stderr); return 1
+    subprocess.call(["launchctl", "bootout", "system", LAUNCHD_PLIST])  # ignore if not loaded
+    rc = subprocess.call(["launchctl", "bootstrap", "system", LAUNCHD_PLIST])
+    print(f"guard: launchd daemon installed ({LAUNCHD_PLIST}); runs '{exe} watch' at boot")
+    return 0 if rc == 0 else rc
+
+
+def _install_linux(uninstall: bool) -> int:
+    if uninstall:
+        subprocess.call(["systemctl", "disable", "--now", "guard.service"])
+        try: os.remove(SYSTEMD_UNIT)
+        except OSError: pass
+        subprocess.call(["systemctl", "daemon-reload"])
+        print("guard: systemd service removed"); return 0
+    home = os.environ.get("GUARD_HOME", "/var/lib/guard")
+    Path(home).mkdir(parents=True, exist_ok=True)
+    exe = _self_exe()
+    unit = f'''[Unit]
+Description=Guard supply-chain watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=GUARD_HOME={home}
+ExecStart={exe} watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+'''
+    try:
+        Path(SYSTEMD_UNIT).write_text(unit)
+    except PermissionError:
+        print("guard install needs root (run with sudo)", file=sys.stderr); return 1
+    subprocess.call(["systemctl", "daemon-reload"])
+    rc = subprocess.call(["systemctl", "enable", "--now", "guard.service"])
+    print(f"guard: systemd service installed ({SYSTEMD_UNIT}); runs '{exe} watch' at boot")
+    return 0 if rc == 0 else rc
+
+
 def cmd_install(uninstall: bool) -> int:
     plat = sys.platform
-    if plat.startswith("linux") or plat == "darwin":
-        script = resource_path("install.sh")
-        argv = ["bash", str(script)] + (["--uninstall"] if uninstall else [])
-        return subprocess.call(argv)
+    if plat == "darwin":
+        return _install_macos(uninstall)
+    if plat.startswith("linux"):
+        return _install_linux(uninstall)
     if plat.startswith("win"):
-        ps = resource_path("service/windows/install-service.ps1")
-        print(f"Windows: run the bundled installer in an elevated PowerShell:\n  {ps}")
+        print("Windows: install via guard.ps1 (it registers the GuardWatcher scheduled task).")
         return 0
     print(f"unsupported platform: {plat}", file=sys.stderr); return 2
 
