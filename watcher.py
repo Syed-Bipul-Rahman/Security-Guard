@@ -104,6 +104,7 @@ class Watcher:
 
         self.repo_debounce_sec = float(self.cfg.get("repo_debounce_sec", 30))
         self._repo_scan_times: dict[str, float] = {}
+        self._telemetry_dirty = False  # set on a new detection -> prompt a telemetry send
 
         # Memory-friendliness controls
         self.batch_size = int(self.cfg.get("batch_size", 2000))
@@ -139,6 +140,7 @@ class Watcher:
         except OSError:
             pass
         self.log(f"ALERT [{kind}] {path} — {len(rec['findings'])} finding(s)")
+        self._telemetry_dirty = True  # a new detection -> report on next loop tick
         qcmd = self.cfg.get("quarantine_cmd")
         if qcmd:
             try:
@@ -358,12 +360,23 @@ class Watcher:
             self.poll_once(prime=True)
             self.log(f"primed {self._store.count()} paths")
         update_every = float(self.cfg.get("update_check_sec", 6 * 3600))  # OTA check cadence
+        tel_every = float(self.cfg.get("telemetry_sec", 3600))            # telemetry cadence
         last_update = 0.0
+        last_tel = 0.0
         while self._running:
             try:
                 self.poll_once()
             except Exception as exc:
                 self.log(f"poll error: {exc}")
+            # Telemetry: periodic, or promptly after a new critical detection.
+            if tel_every > 0 and ((time.time() - last_tel) >= tel_every or self._telemetry_dirty):
+                last_tel = time.time()
+                self._telemetry_dirty = False
+                try:
+                    from telemetry import run_once
+                    run_once(self.home)
+                except Exception as exc:
+                    self.log(f"telemetry error: {exc}")
             # Periodic signed OTA check (blocklist + binary). Never fatal to the watcher.
             if update_every > 0 and (time.time() - last_update) >= update_every:
                 last_update = time.time()

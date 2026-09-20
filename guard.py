@@ -117,6 +117,30 @@ def cmd_deps(args: list[str]) -> int:
 # ---------------------------------------------------------------------------
 # install / uninstall: reuse the bundled installer for this OS
 # ---------------------------------------------------------------------------
+def _write_install_stamp() -> None:
+    """Record who installed Guard + when (attribution/scoping for IR, not blame)."""
+    import getpass
+    home = Path(os.environ.get("GUARD_HOME", "/var/lib/guard"))
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        who = os.environ.get("SUDO_USER") or _safe_user(getpass.getuser)
+        from datetime import datetime, timezone
+        (home / "install.json").write_text(json.dumps({
+            "installed_by": who,
+            "installed_at": datetime.now(timezone.utc).isoformat(),
+            "version": VERSION,
+        }, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _safe_user(fn):
+    try:
+        return fn()
+    except Exception:
+        return None
+
+
 def _self_exe() -> str:
     """Path used to launch this agent in a service unit."""
     if getattr(sys, "frozen", False):
@@ -196,6 +220,8 @@ WantedBy=multi-user.target
 
 def cmd_install(uninstall: bool) -> int:
     plat = sys.platform
+    if not uninstall:
+        _write_install_stamp()
     if plat == "darwin":
         return _install_macos(uninstall)
     if plat.startswith("linux"):
@@ -229,6 +255,14 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_triage(rest)
     if cmd == "deps":
         return cmd_deps(rest)
+    if cmd == "telemetry":
+        try:
+            from telemetry import run_once
+            print(run_once())
+            return 0
+        except Exception as e:
+            print(f"telemetry failed: {e}", file=sys.stderr)
+            return 1
     if cmd == "update":
         # manual OTA check (the service also does this periodically)
         try:
