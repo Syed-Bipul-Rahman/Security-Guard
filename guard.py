@@ -153,6 +153,16 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_triage(rest)
     if cmd == "deps":
         return cmd_deps(rest)
+    if cmd == "update":
+        # manual OTA check (the service also does this periodically)
+        try:
+            from updater import Updater
+            res = Updater(current_version=VERSION).check_and_apply()
+            print(res)
+            return 0
+        except Exception as e:
+            print(f"update failed: {e}", file=sys.stderr)
+            return 1
     if cmd == "install":
         return cmd_install(uninstall=False)
     if cmd == "uninstall":

@@ -18,3 +18,9 @@ malware-feed/malware-advisories.json
 malware-feed/malware-packages.csv
 malware-feed/collect-state.json
 testdata/git-history-repo/
+
+# OTA signing keys / generated manifests (NEVER commit the secret key)
+*.key
+guard-update.key
+manifest.json
+manifest.json.sig

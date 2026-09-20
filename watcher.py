@@ -357,11 +357,24 @@ class Watcher:
             self.log("priming baseline snapshot (first run — existing files not re-alerted)")
             self.poll_once(prime=True)
             self.log(f"primed {self._store.count()} paths")
+        update_every = float(self.cfg.get("update_check_sec", 6 * 3600))  # OTA check cadence
+        last_update = 0.0
         while self._running:
             try:
                 self.poll_once()
             except Exception as exc:
                 self.log(f"poll error: {exc}")
+            # Periodic signed OTA check (blocklist + binary). Never fatal to the watcher.
+            if update_every > 0 and (time.time() - last_update) >= update_every:
+                last_update = time.time()
+                try:
+                    from updater import Updater
+                    res = Updater(log=self.log).check_and_apply()
+                    if res.get("binary_updated"):
+                        self.log("new binary installed via OTA - exiting so the service restarts it")
+                        self._running = False  # supervisor (launchd/systemd KeepAlive) restarts -> runs new binary
+                except Exception as exc:
+                    self.log(f"update check error: {exc}")
             for _ in range(int(self.interval * 10)):
                 if not self._running:
                     break

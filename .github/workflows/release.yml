@@ -1,0 +1,142 @@
+# Guard release pipeline: one `git tag vX.Y.Z` -> build all OS binaries, sign the
+# OTA manifest, and publish a GitHub Release with everything the updater needs.
+#
+# Required repo config (Settings -> Secrets and variables -> Actions):
+#   Variables:  GUARD_UPDATE_PUBKEY  = your Ed25519 PUBLIC key (hex)  [baked into binaries]
+#               GUARD_UPDATE_URL     = https://github.com/<org>/<repo>/releases/latest/download
+#   Secrets:    GUARD_SIGN_KEY_B64   = base64 of the 32-byte SECRET seed  [signs the manifest]
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version: { description: "version e.g. 1.1.0", required: true }
+
+permissions:
+  contents: write        # create the Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,   plat: linux-x64 }
+          - { os: ubuntu-24.04-arm, plat: linux-arm64 }
+          - { os: macos-14,        plat: darwin-arm64 }
+          - { os: macos-13,        plat: darwin-x64 }
+          - { os: windows-latest,  plat: windows-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Resolve version
+        id: v
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then V="${{ github.event.inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Bake release identity into the binary
+        shell: bash
+        env:
+          PUBKEY: ${{ vars.GUARD_UPDATE_PUBKEY }}
+          UPURL: ${{ vars.GUARD_UPDATE_URL }}
+          VER: ${{ steps.v.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os, re, pathlib
+          pub, url, ver = os.environ["PUBKEY"], os.environ["UPURL"], os.environ["VER"]
+          up = pathlib.Path("updater.py"); s = up.read_text()
+          s = re.sub(r'PUBKEY_HEX = os\.environ\.get\("GUARD_UPDATE_PUBKEY", "[^"]*"\)',
+                     f'PUBKEY_HEX = os.environ.get("GUARD_UPDATE_PUBKEY", "{pub}")', s)
+          s = re.sub(r'BASE_URL = os\.environ\.get\("GUARD_UPDATE_URL", "[^"]*"\)',
+                     f'BASE_URL = os.environ.get("GUARD_UPDATE_URL", "{url}")', s)
+          s = re.sub(r'CURRENT_VERSION = "[^"]*"', f'CURRENT_VERSION = "{ver}"', s)
+          up.write_text(s)
+          g = pathlib.Path("guard.py"); t = g.read_text()
+          t = re.sub(r'VERSION = "[^"]*"', f'VERSION = "{ver}"', t)
+          g.write_text(t)
+          print("baked", ver, url, pub[:12] + "...")
+          PY
+
+      - name: Build single binary
+        shell: bash
+        run: |
+          python -m pip install --quiet --upgrade pip pyinstaller
+          pyinstaller build/guard.spec --distpath build/dist --workpath build/work --clean --noconfirm
+
+      - name: Name + checksum artifact
+        shell: bash
+        run: |
+          mkdir -p out
+          if [ "${{ matrix.plat }}" = "windows-x64" ]; then
+            cp build/dist/guard.exe "out/guard-${{ matrix.plat }}.exe"
+            f="out/guard-${{ matrix.plat }}.exe"
+          else
+            cp build/dist/guard "out/guard-${{ matrix.plat }}"
+            f="out/guard-${{ matrix.plat }}"
+          fi
+          ( command -v sha256sum >/dev/null && sha256sum "$f" || shasum -a 256 "$f" ) | awk '{print $1}' > "$f.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guard-${{ matrix.plat }}
+          path: out/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Resolve version
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+
+      - name: Refresh malware blocklist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 malware-feed/collect_malware_advisories.py --out malware-feed --resume || true
+          cp malware-feed/malware-blocklist.json artifacts/malware-blocklist.json
+
+      - name: Restore signing key
+        env:
+          KEY_B64: ${{ secrets.GUARD_SIGN_KEY_B64 }}
+        run: echo "$KEY_B64" | base64 -d > /tmp/guard-update.key && chmod 600 /tmp/guard-update.key
+
+      - name: Build + sign manifest
+        run: |
+          BINS=""
+          for p in linux-x64 linux-arm64 darwin-arm64 darwin-x64; do
+            [ -f "artifacts/guard-$p" ] && BINS="$BINS --binary $p=artifacts/guard-$p"
+          done
+          [ -f "artifacts/guard-windows-x64.exe" ] && BINS="$BINS --binary windows-x64=artifacts/guard-windows-x64.exe"
+          python3 release/sign_manifest.py build-and-sign \
+            --version "${{ steps.v.outputs.version }}" \
+            --key /tmp/guard-update.key \
+            --base-url "${{ vars.GUARD_UPDATE_URL }}" \
+            --blocklist artifacts/malware-blocklist.json \
+            $BINS --out artifacts/manifest.json
+          rm -f /tmp/guard-update.key
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            artifacts/guard-*
+            artifacts/manifest.json
+            artifacts/manifest.json.sig
+            artifacts/malware-blocklist.json
