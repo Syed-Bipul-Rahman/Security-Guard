@@ -24,11 +24,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,   plat: linux-x64 }
-          - { os: ubuntu-24.04-arm, plat: linux-arm64 }
-          - { os: macos-14,        plat: darwin-arm64 }
-          - { os: macos-13,        plat: darwin-x64 }
-          - { os: windows-latest,  plat: windows-x64 }
+          - { os: ubuntu-latest,    plat: linux-x64 }     # Linux x86_64
+          - { os: ubuntu-24.04-arm, plat: linux-arm64 }   # Linux ARM64
+          - { os: macos-14,         plat: darwin-arm64 }  # macOS Apple Silicon
+          - { os: macos-13,         plat: darwin-x64 }    # macOS Intel
+          - { os: windows-latest,   plat: windows-x64 }   # Windows x86_64
+          - { os: windows-11-arm,   plat: windows-arm64 } # Windows on ARM
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -119,10 +120,13 @@ jobs:
       - name: Build + sign manifest
         run: |
           BINS=""
-          for p in linux-x64 linux-arm64 darwin-arm64 darwin-x64; do
-            [ -f "artifacts/guard-$p" ] && BINS="$BINS --binary $p=artifacts/guard-$p"
+          # auto-include every built binary (guard-<plat>[.exe]); skip .sha256
+          for f in artifacts/guard-*; do
+            case "$f" in *.sha256) continue ;; esac
+            base=$(basename "$f"); plat=${base#guard-}; plat=${plat%.exe}
+            BINS="$BINS --binary $plat=$f"
           done
-          [ -f "artifacts/guard-windows-x64.exe" ] && BINS="$BINS --binary windows-x64=artifacts/guard-windows-x64.exe"
+          echo "signing binaries:$BINS"
           python3 release/sign_manifest.py build-and-sign \
             --version "${{ steps.v.outputs.version }}" \
             --key /tmp/guard-update.key \
