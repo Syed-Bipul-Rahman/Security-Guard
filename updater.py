@@ -43,7 +43,7 @@ import ed25519_pure
 
 # --- release identity: REPLACE with your real public key before shipping ---
 # (generate with release/sign_manifest.py keygen; keep the SECRET key offline)
-PUBKEY_HEX = os.environ.get("GUARD_UPDATE_PUBKEY", "")  # empty in source; set at build/release
+PUBKEY_HEX = os.environ.get("GUARD_UPDATE_PUBKEY", "b42962000f5fd0e3f3ab68eaee6ab946623f50313c8b6d3b644421daf9279bb0")  # empty in source; set at build/release
 BASE_URL = os.environ.get("GUARD_UPDATE_URL", "https://security.syedbipul.me/guard")
 CURRENT_VERSION = "1.0.0"   # kept in sync with guard.VERSION at build time
 
