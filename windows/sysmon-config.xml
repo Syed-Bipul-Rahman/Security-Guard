@@ -1,0 +1,95 @@
+<Sysmon schemaversion="4.90">
+  <!--
+    Guard Sysmon configuration — tuned to the sparktechagency incident behaviors.
+
+    Sysmon is a Microsoft-signed KERNEL-MODE driver. Installing it gives Guard
+    kernel-sourced process/file/registry telemetry with NO custom driver to write
+    or sign. Deploy:
+
+        sysmon64.exe -accepteula -i sysmon-config.xml     (install + config)
+        sysmon64.exe -c sysmon-config.xml                 (update config later)
+
+    Events land in: Microsoft-Windows-Sysmon/Operational, consumed by
+    windows_sensor.py (SysmonSource).
+
+    This config is intentionally NARROW (low noise on dev machines): it logs the
+    behaviors we care about, not everything. Broaden later as needed.
+  -->
+  <EventFiltering>
+
+    <!-- ======================================================================
+         B. FILE CREATION (Event ID 11) — python/script droppers in temp,
+            and fake-font droppers. Sysmon reports the writing process too.
+         ==================================================================== -->
+    <RuleGroup name="dropper-files" groupRelation="or">
+      <FileCreate onmatch="include">
+        <!-- scripts staged in temp / roaming / public -->
+        <TargetFilename condition="contains">\AppData\Local\Temp\</TargetFilename>
+        <TargetFilename condition="contains">\AppData\Roaming\</TargetFilename>
+        <TargetFilename condition="contains">\Windows\Temp\</TargetFilename>
+        <TargetFilename condition="contains">\Users\Public\</TargetFilename>
+        <!-- specific extensions anywhere under user profile -->
+        <TargetFilename condition="end with">.py</TargetFilename>
+        <TargetFilename condition="end with">.pyw</TargetFilename>
+        <TargetFilename condition="end with">.ps1</TargetFilename>
+        <TargetFilename condition="end with">.vbs</TargetFilename>
+        <TargetFilename condition="end with">.hta</TargetFilename>
+        <TargetFilename condition="end with">.scr</TargetFilename>
+        <!-- the known fake-font dropper -->
+        <TargetFilename condition="end with">fa-solid-400.woff2</TargetFilename>
+        <TargetFilename condition="contains">\public\fonts\</TargetFilename>
+      </FileCreate>
+    </RuleGroup>
+
+    <!-- ======================================================================
+         A/C. PROCESS CREATION (Event ID 1) — interpreters spawned by editors/
+            node, powershell with encoded commands, and reboot initiators.
+         ==================================================================== -->
+    <RuleGroup name="suspicious-processes" groupRelation="or">
+      <ProcessCreate onmatch="include">
+        <!-- reboot initiators (catch WHO restarts the machine) -->
+        <Image condition="end with">shutdown.exe</Image>
+        <CommandLine condition="contains">shutdown</CommandLine>
+        <CommandLine condition="contains any">/r;/s;-r;-Restart;InitiateSystemShutdown</CommandLine>
+        <!-- encoded / download-and-exec powershell -->
+        <CommandLine condition="contains any">-enc;-EncodedCommand;FromBase64String;DownloadString;IEX;Invoke-Expression</CommandLine>
+        <!-- interpreters launched out of temp -->
+        <CommandLine condition="contains">\AppData\Local\Temp\</CommandLine>
+        <CommandLine condition="contains">\Windows\Temp\</CommandLine>
+        <!-- incident C2 -->
+        <CommandLine condition="contains">auth-confirm-ten.vercel.app</CommandLine>
+        <!-- node/python spawned by the editor (folderOpen dropper vector) -->
+        <ParentImage condition="end with">Code.exe</ParentImage>
+      </ProcessCreate>
+    </RuleGroup>
+
+    <!-- keep node.exe->powershell/cmd/python chains (dropper hand-off) -->
+    <RuleGroup name="script-chains" groupRelation="and">
+      <ProcessCreate onmatch="include">
+        <ParentImage condition="end with">node.exe</ParentImage>
+        <Image condition="end with any">powershell.exe;cmd.exe;python.exe;pythonw.exe;wscript.exe;cscript.exe;mshta.exe;shutdown.exe</Image>
+      </ProcessCreate>
+    </RuleGroup>
+
+    <!-- ======================================================================
+         Registry persistence (Event IDs 12/13/14) — Run keys, Winlogon, IFEO,
+            services. Sysmon reports the process that made the change.
+         ==================================================================== -->
+    <RuleGroup name="registry-persistence" groupRelation="or">
+      <RegistryEvent onmatch="include">
+        <TargetObject condition="contains">\CurrentVersion\Run</TargetObject>
+        <TargetObject condition="contains">\CurrentVersion\RunOnce</TargetObject>
+        <TargetObject condition="contains">\Explorer\Run</TargetObject>
+        <TargetObject condition="contains">\Winlogon\Shell</TargetObject>
+        <TargetObject condition="contains">\Winlogon\Userinit</TargetObject>
+        <TargetObject condition="contains">\Image File Execution Options</TargetObject>
+        <TargetObject condition="contains">\CurrentControlSet\Services</TargetObject>
+        <TargetObject condition="contains">\StartupApproved</TargetObject>
+      </RegistryEvent>
+    </RuleGroup>
+
+    <!-- Reduce noise: drop Sysmon's own + common signed updaters if needed.
+         (Add ProcessCreate onmatch="exclude" rules here after a noise review.) -->
+
+  </EventFiltering>
+</Sysmon>

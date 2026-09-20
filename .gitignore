@@ -1,0 +1,20 @@
+# build artifacts
+build/dist/
+build/work/
+__pycache__/
+*.pyc
+.DS_Store
+
+# local forensic outputs (contain real host IPs / hostnames / SSH fingerprints)
+windows/guard-triage_*.txt
+windows/*forensics*.txt
+windows/New Text Document.txt
+guard-triage-linux_*.txt
+*.jsonl
+
+# large / regenerable malware-feed data
+#   - advisories.json is 252MB (> GitHub limit); packages.csv is large; both regenerate
+malware-feed/malware-advisories.json
+malware-feed/malware-packages.csv
+malware-feed/collect-state.json
+testdata/git-history-repo/

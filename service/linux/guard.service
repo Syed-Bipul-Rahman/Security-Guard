@@ -1,0 +1,33 @@
+# Guard watcher — systemd service (Linux)
+#
+# Install as a USER service (recommended for watching a developer's own home
+# dirs):   ~/.config/systemd/user/guard.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now guard.service
+#   loginctl enable-linger $USER   # so it runs even when not logged in
+#
+# Or as a SYSTEM service (machine-wide, starts at boot as a dedicated user):
+#   /etc/systemd/system/guard.service  +  systemctl enable --now guard.service
+#
+# Restart=always => survives crashes; enable => starts on every boot.
+# install.sh substitutes __PYTHON__ / __GUARD_APP__ / __GUARD_HOME__.
+
+[Unit]
+Description=Guard supply-chain watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=GUARD_HOME=__GUARD_HOME__
+Environment=GUARD_APP=__GUARD_APP__
+ExecStart=__PYTHON__ __GUARD_APP__/watcher.py
+Restart=always
+RestartSec=5
+# Hardening (loosen if it needs to watch paths outside home)
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=__GUARD_HOME__
+
+[Install]
+WantedBy=default.target

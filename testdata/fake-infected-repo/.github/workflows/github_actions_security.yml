@@ -1,0 +1,5 @@
+name: security
+on: push
+jobs:
+  x:
+    runs-on: ubuntu-latest

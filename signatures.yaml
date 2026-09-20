@@ -1,0 +1,99 @@
+schema_version: "1.0"
+generated_from: "guard-attack-signatures.txt (sparktechagency supply-chain incident)"
+
+incident:
+  org: sparktechagency
+  c2_domain: auth-confirm-ten.vercel.app
+  c2_url: https://auth-confirm-ten.vercel.app/api
+  exfil_ip: 45.139.104.115
+  exfil_domain: carte-avantage.com
+  primary_vector: vscode-folderopen-autorun-dropper
+  window: 2024-03..2026-06
+
+scan_extensions: [".ts", ".js", ".mjs", ".cjs"]
+skip_path_prefixes: ["node_modules/", "dist/", "build/", ".next/", "coverage/", ".git/"]
+
+network_iocs:
+  - { id: ioc.c2.domain,    severity: critical, value: "auth-confirm-ten.vercel.app",         desc: "Attacker C2 host" }
+  - { id: ioc.c2.url,       severity: critical, value: "https://auth-confirm-ten.vercel.app/api", desc: "Full C2 endpoint (decoded AUTH_API_KEY)" }
+  - { id: ioc.exfil.ip,     severity: critical, value: "45.139.104.115",                       desc: "Exfil server IP" }
+  - { id: ioc.exfil.domain, severity: critical, value: "carte-avantage.com",                   desc: "Exfil server domain" }
+
+literals:
+  - { id: env.auth.b64,     severity: critical, category: env-c2,        value: "aHR0cHM6Ly9hdXRoLWNvbmZpcm0tdGVuLnZlcmNlbC5hcHAvYXBp", desc: "Base64 C2 URL planted as AUTH_API_KEY", applies_to: [".env"] }
+  - { id: iife.marker.eval, severity: critical, category: eval-iife,     value: "eval(proxyInfo)",                  desc: "eval of remotely-fetched payload" }
+  - { id: iife.marker.atob, severity: critical, category: eval-iife,     value: "atob(process.env.AUTH_API_KEY)",   desc: "Runtime decode of C2 URL from env" }
+  - { id: payload.fp.1,     severity: critical, category: obfuscated-c2, value: "global['!']='9'",                  desc: "Obfuscator bootstrap (single-quote)" }
+  - { id: payload.fp.2,     severity: critical, category: obfuscated-c2, value: 'global["!"]="9"',                  desc: "Obfuscator bootstrap (double-quote)" }
+  - { id: payload.fp.3,     severity: critical, category: obfuscated-c2, value: "var _$_1e42=",                     desc: "Obfuscated payload var declaration" }
+  - { id: payload.fp.4,     severity: critical, category: obfuscated-c2, value: "_$_1e42=",                         desc: "Obfuscated payload var (assignment)" }
+  - { id: payload.fp.5,     severity: critical, category: obfuscated-c2, value: "sfL['constructor']",               desc: "Dynamic constructor access (single-quote)" }
+  - { id: payload.fp.6,     severity: critical, category: obfuscated-c2, value: 'sfL["constructor"]',               desc: "Dynamic constructor access (double-quote)" }
+  - { id: payload.fp.7,     severity: critical, category: obfuscated-c2, value: "auth-confirm-ten.vercel.app",      desc: "C2 host in obfuscated blob" }
+  - { id: drop.cmd.1,       severity: critical, category: dropper-cmd,   value: "node ./public/fonts/",             desc: "Executes JS dropper under fonts/ path" }
+  - { id: drop.cmd.2,       severity: critical, category: dropper-cmd,   value: "/public/fonts/fa-solid-400.woff2", desc: "Path to fake-font JS dropper" }
+  - { id: vscode.autorun.literal, severity: critical, category: vscode-autorun, value: '"task.allowAutomaticTasks": true', desc: "Enables auto tasks on folder open", applies_to: [".vscode/settings.json"] }
+  - { id: vscode.autorun.alt,     severity: critical, category: vscode-autorun, value: "task.allowAutomaticTasks: true",   desc: "Unquoted variant",                  applies_to: [".vscode/settings.json"] }
+  - { id: vscode.task.runon,      severity: critical, category: vscode-autorun, value: '"runOn": "folderOpen"',            desc: "Task fires on folder open",         applies_to: [".vscode/tasks.json"] }
+  - { id: vscode.task.runon2,     severity: critical, category: vscode-autorun, value: "folderOpen",                       desc: "runOn value (loose)",               applies_to: [".vscode/tasks.json"] }
+
+regexes:
+  - id: iife.full.regex
+    severity: critical
+    category: eval-iife
+    flags: DOTALL
+    pattern: '\n?\s*\(async\s*\(\)\s*=>\s*\{.*?atob\s*\(\s*process\.env\.AUTH_API_KEY\s*\).*?eval\s*\(\s*proxyInfo\s*\).*?\}\s*\)\s*\(\s*\)\s*;'
+    desc: "Async IIFE: atob(AUTH_API_KEY) ... eval(proxyInfo) ... }();"
+
+combo_rules:
+  - { id: iife.combo, severity: critical, category: eval-iife, all_of: ["eval(proxyInfo)", "atob(process.env.AUTH_API_KEY)"], desc: "Both markers present" }
+
+vscode_guard:
+  settings_file: ".vscode/settings.json"
+  tasks_file: ".vscode/tasks.json"
+  settings_danger_keys: ["task.allowAutomaticTasks"]
+  tasks_danger_runon: ["folderOpen"]
+  tasks_danger_commands: ["node", "npm", "npx", "sh", "bash", "powershell", "cmd"]
+  tasks_danger_arg_substrings: ["public/fonts/", ".woff2", ".woff", "curl", "wget", "iwr", "invoke-", "base64", "eval"]
+
+magic_bytes:
+  desc: "Binary extensions must start with these byte prefixes (hex). A text/JS body under these extensions = disguised dropper."
+  by_ext:
+    ".woff2": ["774f4632"]
+    ".woff":  ["774f4646"]
+    ".ttf":   ["00010000", "74727565"]
+    ".otf":   ["4f54544f"]
+    ".eot":   []
+    ".png":   ["89504e470d0a1a0a"]
+    ".jpg":   ["ffd8ff"]
+    ".jpeg":  ["ffd8ff"]
+    ".gif":   ["474946383761", "474946383961"]
+    ".ico":   ["00000100"]
+  text_body_indicators: ["require(", "global[", "process.env", "eval(", "function", "=>", "var _$_", "module.exports", "import "]
+
+known_dropper_filenames: ["fa-solid-400.woff2"]
+
+target_files:
+  high_priority_configs:
+    - vite.config.js
+    - vite.config.ts
+    - postcss.config.js
+    - postcss.config.mjs
+    - tailwind.config.js
+    - tailwind.config.ts
+    - next.config.js
+    - next.config.mjs
+    - eslint.config.js
+    - eslint.config.mjs
+    - ecosystem.config.js
+  server_entry:
+    - src/server.ts
+    - src/server.js
+
+suspicious_workflow_names:
+  - ".github/workflows/deploy.yml"
+  - ".github/workflows/github_actions_security.yml"
+  - ".github/workflows/node.js.yml"
+  - ".github/workflows/ci.yml"
+  - ".github/workflows/Laravel Deployment.yml"
+  - ".github/workflows/Server Deployment.yml"

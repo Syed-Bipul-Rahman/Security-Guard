@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Guard watcher — macOS launchd service.
+
+  Two install options:
+   * Per-user LaunchAgent  (~/Library/LaunchAgents/) — runs as the logged-in user,
+     can watch that user's home dev folders. RECOMMENDED for the file watcher,
+     because it needs to read the developer's own project directories.
+   * System LaunchDaemon   (/Library/LaunchDaemons/) — runs at boot as root,
+     before login. Use for a machine-wide component.
+
+  RunAtLoad + KeepAlive => starts at login/boot and restarts on crash, so it keeps
+  working across restart and shutdown. Replace __GUARD_APP__ and __PYTHON__ at
+  install time (install.sh does this).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.syedbipul.guard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>__GUARD_APP__/watcher.py</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>GUARD_HOME</key>
+        <string>__GUARD_HOME__</string>
+        <key>GUARD_APP</key>
+        <string>__GUARD_APP__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>__GUARD_HOME__/watcher.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__GUARD_HOME__/watcher.err.log</string>
+</dict>
+</plist>
