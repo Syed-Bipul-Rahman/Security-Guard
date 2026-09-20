@@ -2,9 +2,9 @@
 # OTA manifest, and publish a GitHub Release with everything the updater needs.
 #
 # Required repo config (Settings -> Secrets and variables -> Actions):
-#   Variables:  GUARD_UPDATE_PUBKEY  = your Ed25519 PUBLIC key (hex)  [baked into binaries]
-#               GUARD_UPDATE_URL     = https://github.com/<org>/<repo>/releases/latest/download
-#   Secrets:    GUARD_SIGN_KEY_B64   = base64 of the 32-byte SECRET seed  [signs the manifest]
+#   Secrets:  GUARD_UPDATE_PUBKEY = your Ed25519 PUBLIC key (hex)   [baked into binaries]
+#             GUARD_UPDATE_URL    = https://github.com/<org>/<repo>/releases/latest/download
+#             GUARD_SIGN_KEY_B64  = base64 of the 32-byte SECRET seed   [signs the manifest]
 
 name: release
 
@@ -45,8 +45,8 @@ jobs:
       - name: Bake release identity into the binary
         shell: bash
         env:
-          PUBKEY: ${{ vars.GUARD_UPDATE_PUBKEY }}
-          UPURL: ${{ vars.GUARD_UPDATE_URL }}
+          PUBKEY: ${{ secrets.GUARD_UPDATE_PUBKEY }}
+          UPURL: ${{ secrets.GUARD_UPDATE_URL }}
           VER: ${{ steps.v.outputs.version }}
         run: |
           python - <<'PY'
@@ -126,7 +126,7 @@ jobs:
           python3 release/sign_manifest.py build-and-sign \
             --version "${{ steps.v.outputs.version }}" \
             --key /tmp/guard-update.key \
-            --base-url "${{ vars.GUARD_UPDATE_URL }}" \
+            --base-url "${{ secrets.GUARD_UPDATE_URL }}" \
             --blocklist artifacts/malware-blocklist.json \
             $BINS --out artifacts/manifest.json
           rm -f /tmp/guard-update.key
