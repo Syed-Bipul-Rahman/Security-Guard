@@ -69,7 +69,10 @@ class FingerprintMatcher:
 
     # ------------------------------------------------------------------ utils
     def _skip(self, path: str) -> bool:
-        return any(path.startswith(p) for p in self.skip_prefixes)
+        # skip if any skip token is a path COMPONENT anywhere (catches nested
+        # node_modules/.dart_tool/Pods/... not just at the repo root)
+        parts = set(path.replace("\\", "/").split("/"))
+        return any(p.strip("/") in parts for p in self.skip_prefixes)
 
     def _applies(self, lit: dict, path: str) -> bool:
         applies_to = lit.get("applies_to")
@@ -117,8 +120,12 @@ class FingerprintMatcher:
                 findings.append(Finding(path, combo["id"], combo["severity"], combo.get("category", "?"),
                                         combo["desc"], " + ".join(combo["all_of"])))
 
-        # Structural regexes
+        # Structural regexes — gated by a cheap `requires` substring so an expensive
+        # DOTALL pattern never runs (and never backtracks) on files that can't match.
         for r, rx in self.regexes:
+            req = r.get("requires")
+            if req and req not in content:
+                continue
             m = rx.search(content)
             if m:
                 ev = m.group(0)[:80].replace("\n", "\\n")

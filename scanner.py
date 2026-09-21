@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import asdict, is_dataclass
@@ -84,7 +85,8 @@ class GuardScanner:
             self.workflow_baseline = None
 
     def _skip(self, rel: str) -> bool:
-        return any(rel.startswith(p) for p in self.skip_prefixes)
+        parts = set(rel.replace("\\", "/").split("/"))
+        return any(p.strip("/") in parts for p in self.skip_prefixes)
 
     # ---------------------------------------------------------------- tree
     # Safety cap: no single tree scan should touch more files than this. Protects
@@ -106,30 +108,37 @@ class GuardScanner:
                 if f.severity != "ok":
                     results["workflow_baseline"].append(_finding_dict(f))
 
-        # 2 & 3. Walk files (with a hard safety cap)
+        # 2 & 3. Walk files. Use os.walk with in-place dir PRUNING so we never even
+        # descend into node_modules/.dart_tool/Pods/etc. (huge speedup vs. rglob,
+        # which visits every file before filtering).
+        skip_names = {p.strip("/") for p in self.skip_prefixes}
         seen = 0
-        for path in repo.rglob("*"):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(repo).as_posix()
-            if self._skip(rel):
-                continue
-            seen += 1
-            if seen > self.MAX_FILES:
-                results["fingerprint"].append({
-                    "where": str(repo), "sig_id": "scan.aborted", "severity": "info",
-                    "category": "scanner", "desc": f"tree exceeds {self.MAX_FILES} files — aborted (wrong target?)"})
-                break
-            ext = path.suffix.lower()
+        aborted = False
+        for dirpath, dirnames, filenames in os.walk(repo):
+            dirnames[:] = [d for d in dirnames if d not in skip_names]  # prune
+            for fn in filenames:
+                path = Path(dirpath) / fn
+                try:
+                    rel = path.relative_to(repo).as_posix()
+                except ValueError:
+                    continue
+                seen += 1
+                if seen > self.MAX_FILES:
+                    results["fingerprint"].append({
+                        "where": str(repo), "sig_id": "scan.aborted", "severity": "info",
+                        "category": "scanner", "desc": f"tree exceeds {self.MAX_FILES} files — aborted (wrong target?)"})
+                    aborted = True
+                    break
+                ext = path.suffix.lower()
 
-            if ext in self.BINARY_EXTS:
-                for f in self.magic.check_file(path):
-                    d = _finding_dict(f)
-                    d["path"] = rel
-                    results["magic"].append(d)
+                if ext in self.BINARY_EXTS:
+                    for f in self.magic.check_file(path):
+                        d = _finding_dict(f)
+                        d["path"] = rel
+                        results["magic"].append(d)
+                    continue
 
-            # Fingerprint scan on text-ish files (source, config, env, json, yml)
-            if ext not in self.BINARY_EXTS:
+                # Fingerprint scan on text-ish files (source, config, env, json, yml)
                 content = read_text_capped(path)
                 if content is None:
                     continue
@@ -143,6 +152,8 @@ class GuardScanner:
                             "category": df.category, "desc": df.desc,
                             "ecosystem": df.ecosystem, "name": df.name, "version": df.version})
                 del content  # release before next file
+            if aborted:
+                break
 
         results["infected"] = self._is_infected(results)
         return results
