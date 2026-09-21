@@ -106,12 +106,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { path: artifacts, merge-multiple: true }
 
-      - name: Refresh malware blocklist
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Stage malware blocklist (committed snapshot)
         run: |
-          python3 malware-feed/collect_malware_advisories.py --out malware-feed --resume || true
+          # Ship the committed blocklist snapshot — fast. Agents refresh it themselves
+          # via OTA `guard deps update`, so the release doesn't do a slow full fetch.
           cp malware-feed/malware-blocklist.json artifacts/malware-blocklist.json
+          echo "blocklist names: $(python3 -c 'import json;print(sum(len(v) for v in json.load(open("malware-feed/malware-blocklist.json")).values()))')"
 
       - name: Restore signing key
         env:
