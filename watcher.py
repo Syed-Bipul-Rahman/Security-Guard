@@ -68,6 +68,7 @@ DEFAULT_CONFIG = {
     "max_changes_per_pass": 2000,
     "mem_budget_fraction": 0.10,
     "hard_memory_ceiling": False,
+    "update_check_sec": 60,   # OTA auto-update cadence (TEST BUILD: 60s; production: 21600 = 6h)
     "quarantine_cmd": None,
 }
 
