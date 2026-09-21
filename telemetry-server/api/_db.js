@@ -16,7 +16,14 @@ async function getDb() {
       .connect(uri, { maxPoolSize: 5, serverSelectionTimeoutMS: 8000 })
       .then((client) => client.db(dbName));
   }
-  cached.conn = await cached.promise;
+  try {
+    cached.conn = await cached.promise;
+  } catch (e) {
+    // IMPORTANT: don't cache a rejected connection — reset so the next request
+    // retries with a fresh connection (e.g. after the Atlas allowlist is fixed).
+    cached.promise = null;
+    throw e;
+  }
   return cached.conn;
 }
 
