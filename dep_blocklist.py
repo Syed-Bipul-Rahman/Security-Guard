@@ -20,6 +20,44 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _parse_ver(v: str):
+    """Extract a comparable (major, minor, patch) tuple from a version string/spec."""
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", v or "")
+    if m:
+        return tuple(int(x) for x in m.groups())
+    m = re.search(r"(\d+)\.(\d+)", v or "")
+    if m:
+        return (int(m.group(1)), int(m.group(2)), 0)
+    m = re.search(r"(\d+)", v or "")
+    return (int(m.group(1)), 0, 0) if m else None
+
+
+def _in_range(installed: str, range_str: str) -> bool:
+    """Does `installed` satisfy one GitHub vulnerable_version_range (commas = AND)?"""
+    import operator
+    rs = (range_str or "").strip()
+    if rs in (">= 0", ">=0", "*", ""):
+        return True  # whole package is malicious (typosquat / fully bad)
+    iv = _parse_ver(installed)
+    if iv is None:
+        return False  # unknown installed version -> don't claim a match (avoid false positives)
+    ops = {">=": operator.ge, "<=": operator.le, "==": operator.eq,
+           "=": operator.eq, ">": operator.gt, "<": operator.lt}
+    for clause in rs.split(","):
+        m = re.match(r"\s*(>=|<=|==|=|>|<)\s*(.+)", clause.strip())
+        if not m:
+            return False
+        tv = _parse_ver(m.group(2))
+        if tv is None or not ops[m.group(1)](iv, tv):
+            return False
+    return True
+
+
+def _version_flagged(installed: str, ranges: list[str]) -> bool:
+    """True if the installed version matches ANY flagged range (OR across advisories)."""
+    return any(_in_range(installed, r) for r in ranges)
+
+
 @dataclass
 class DepFinding:
     ecosystem: str
@@ -136,9 +174,16 @@ class DepBlocklist:
         out = []
         seen = set()
         for name, ver in self._names(base, content):
-            if name in eco_bl and (name, ver) not in seen:
-                seen.add((name, ver))
-                out.append(DepFinding(eco, name, ver or "?", ", ".join(eco_bl[name]), rel_path))
+            if name not in eco_bl or (name, ver) in seen:
+                continue
+            ranges = eco_bl[name]
+            # Only flag if the INSTALLED version matches a flagged range — a name
+            # match alone false-positives on legit packages (chalk, axios, ...) that
+            # only had specific compromised versions.
+            if not _version_flagged(ver, ranges):
+                continue
+            seen.add((name, ver))
+            out.append(DepFinding(eco, name, ver or "?", ", ".join(ranges), rel_path))
         return out
 
 

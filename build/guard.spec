@@ -51,6 +51,7 @@ hiddenimports = [
     "pathlib", "dataclasses", "datetime", "binascii", "gc", "ntpath", "stat",
     "tempfile", "runpy", "shutil", "urllib", "urllib.request", "urllib.error",
     "urllib.parse", "xml", "xml.etree", "xml.etree.ElementTree",
+    "ssl", "certifi",   # certifi provides the CA bundle so HTTPS works in the frozen binary
 ]
 if sys.platform != "win32":
     hiddenimports.append("resource")

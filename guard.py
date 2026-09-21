@@ -31,7 +31,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +142,29 @@ def _safe_user(fn):
         return None
 
 
+def _write_watch_config() -> None:
+    """When installed via sudo, the daemon runs as root — point its watch roots at
+    the REAL user's home so it sees the developer's projects, not root's empty dirs."""
+    user = os.environ.get("SUDO_USER")
+    if not user or user == "root":
+        return  # not a sudo install; watcher defaults are fine
+    home = Path(os.environ.get("GUARD_HOME", "/var/lib/guard"))
+    cfg_path = home / "watcher.config.json"
+    if cfg_path.exists():
+        return  # don't clobber an existing/tuned config
+    try:
+        import pwd
+        userhome = pwd.getpwnam(user).pw_dir
+    except Exception:
+        userhome = f"/Users/{user}" if sys.platform == "darwin" else f"/home/{user}"
+    roots = [f"{userhome}/{d}" for d in ("Projects", "code", "src", "Desktop", "Downloads", "Documents")]
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps({"watch_roots": roots}, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _self_exe() -> str:
     """Path used to launch this agent in a service unit."""
     if getattr(sys, "frozen", False):
@@ -223,6 +246,7 @@ def cmd_install(uninstall: bool) -> int:
     plat = sys.platform
     if not uninstall:
         _write_install_stamp()
+        _write_watch_config()
     if plat == "darwin":
         return _install_macos(uninstall)
     if plat.startswith("linux"):
@@ -236,7 +260,21 @@ def cmd_install(uninstall: bool) -> int:
 USAGE = __doc__
 
 
+def _harden_ssl() -> None:
+    """Point HTTPS at a real CA bundle. A PyInstaller binary has no system certs,
+    so urllib fails with CERTIFICATE_VERIFY_FAILED (breaks OTA/telemetry). certifi
+    (bundled at build time) provides the trust store."""
+    try:
+        import ssl
+        import certifi
+        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+        ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _harden_ssl()
     argv = argv if argv is not None else sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(USAGE); return 0

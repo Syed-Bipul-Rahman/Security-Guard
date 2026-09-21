@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-python3 -m pip install --quiet --upgrade pyinstaller
+python3 -m pip install --quiet --upgrade pyinstaller certifi
 
 # refresh the bundled blocklist snapshot so `guard deps check` works out of the box
 if [ ! -f malware-feed/malware-blocklist.json ]; then

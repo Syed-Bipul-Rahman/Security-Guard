@@ -70,7 +70,7 @@ jobs:
       - name: Build single binary
         shell: bash
         run: |
-          python -m pip install --quiet --upgrade pip pyinstaller
+          python -m pip install --quiet --upgrade pip pyinstaller certifi
           pyinstaller build/guard.spec --distpath build/dist --workpath build/work --clean --noconfirm
 
       - name: Name + checksum artifact
