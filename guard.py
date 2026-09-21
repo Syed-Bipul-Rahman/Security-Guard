@@ -22,6 +22,7 @@ Run `guard <cmd> -h` for command options.
 
 from __future__ import annotations
 
+import json
 import os
 import runpy
 import stat
@@ -30,7 +31,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 
 # ---------------------------------------------------------------------------
