@@ -18,7 +18,9 @@ module.exports = async (req, res) => {
     if (!body || typeof body !== 'object') {
       return res.status(400).json({ error: 'invalid body' });
     }
-    const machineId = (body.host && body.host.machine_id) || null;
+    // prefer the hashed-MAC machine_id; fall back to hostname so a report always
+    // lands in the fleet view even if machine_id is missing.
+    const machineId = (body.host && (body.host.machine_id || body.host.hostname)) || null;
     const doc = Object.assign({}, body, {
       machine_id: machineId,
       src_ip: (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null,
