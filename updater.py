@@ -168,6 +168,13 @@ class Updater:
             self.log(f"updater: no binary for platform {platform_key()} in manifest")
             return False
         target = Path(sys.executable)      # the running binary
+        # Only the root service can replace a binary in a system dir. If this process
+        # can't write there (e.g. a manual non-root `guard watch`), skip cleanly — the
+        # service handles binary updates; don't download or error.
+        if not os.access(str(target.parent), os.W_OK):
+            self.log(f"updater: {newver} available; binary self-update skipped "
+                     f"({target.parent} not writable — the root service applies it). Blocklist is current.")
+            return False
         tmp = target.with_suffix(".new")
         if not self._download_verified(entry["url"], entry["sha256"], tmp):
             return False
