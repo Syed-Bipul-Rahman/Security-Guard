@@ -41,7 +41,7 @@
   .chip{display:inline-block;background:var(--chip);color:var(--muted);border-radius:6px;padding:1px 7px;font-size:11px;font-family:ui-monospace,Menlo,Consolas,monospace;}
   .mut{color:var(--muted);} .empty{padding:26px;text-align:center;color:var(--muted);}
   .foot{color:var(--muted);font-size:12px;margin-top:16px;}
-  @media (max-width:720px){th:nth-child(6),td:nth-child(6),th:nth-child(8),td:nth-child(8){display:none;}}
+  @media (max-width:720px){th:nth-child(5),td:nth-child(5),th:nth-child(8),td:nth-child(8){display:none;}}
 </style>
 </head>
 <body>
@@ -57,13 +57,12 @@
   <div class="controls">
     <input id="q" placeholder="search host / user / IP / pattern…">
     <select id="floorSel"><option value="">All floors</option></select>
-    <select id="provSel"><option value="">All providers</option></select>
     <select id="statusSel"><option value="">All status</option><option value="infected">Infected</option><option value="clean">Clean</option></select>
   </div>
   <div class="tablewrap">
     <table><thead><tr>
-      <th>Host</th><th>User</th><th>OS</th><th>Local IP</th><th>Floor</th>
-      <th>Public IP → Provider</th><th>Status</th><th>How</th><th>Installed by</th>
+      <th>Host</th><th>User</th><th>OS</th><th>Local IP</th>
+      <th>Public IP</th><th>Status</th><th>How</th><th>Installed by</th>
     </tr></thead><tbody id="rows"></tbody></table>
     <div class="empty" id="empty" hidden>No machines match.</div>
   </div>
@@ -81,17 +80,17 @@ function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;
 function normalize(){return DATA.map(function(d){var h=d.host||{},e=d.events||{},ips=h.local_ips||[];return{host:h.hostname||'?',user:h.username||'?',os:(h.os||'?')+' '+(h.os_version||''),lip:primaryLocal(ips),floor:resolveFloor(ips),pip:h.public_ip||'',provider:resolveProvider(h.public_ip),infected:!!e.infected,how:(e.how&&e.how[0])||'',detections:e.total_detections||0,by:(h.install&&h.install.installed_by)||'?'};});}
 function tile(n,l,c){return '<div class="tile'+(c?' '+c:'')+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
 function fillSel(id,vals){var s=document.getElementById(id);var cur=s.value;s.length=1;vals.forEach(function(v){var o=document.createElement('option');o.value=v;o.textContent=v;s.appendChild(o);});s.value=cur;}
-function render(){var all=normalize();var infected=all.filter(function(m){return m.infected;}).length;var fs={},ps={};all.forEach(function(m){fs[m.floor]=1;if(m.provider)ps[m.provider]=1;});
-  document.getElementById('tiles').innerHTML=[tile(all.length,'machines',''),tile(infected,'infected','crit'),tile(all.length-infected,'clean','ok'),tile(Object.keys(fs).length,'floors',''),tile(Object.keys(ps).length,'providers','')].join('');
+function render(){var all=normalize();var infected=all.filter(function(m){return m.infected;}).length;var fs={};all.forEach(function(m){fs[m.floor]=1;});
+  document.getElementById('tiles').innerHTML=[tile(all.length,'machines',''),tile(infected,'infected','crit'),tile(all.length-infected,'clean','ok'),tile(Object.keys(fs).length,'floors','')].join('');
   var byFloor={};all.forEach(function(m){(byFloor[m.floor]=byFloor[m.floor]||[]).push(m);});var fn=Object.keys(byFloor).sort();
   document.getElementById('floors').innerHTML=fn.map(function(f){var ms=byFloor[f],inf=ms.filter(function(m){return m.infected;}).length,pct=ms.length?Math.round(inf/ms.length*100):0;return '<div class="floor'+(inf?' hasinfect':'')+'"><div class="fl">'+esc(f)+'</div><div class="meta">'+ms.length+' machines · '+(inf?('<b style="color:var(--crit)">'+inf+' infected</b>'):'all clean')+'</div><div class="bar"><span style="width:'+pct+'%"></span></div></div>';}).join('');
-  fillSel('floorSel',fn);fillSel('provSel',Object.keys(ps).sort());applyFilters(all);}
-function applyFilters(all){all=all||normalize();var q=document.getElementById('q').value.toLowerCase();var f=document.getElementById('floorSel').value,p=document.getElementById('provSel').value,st=document.getElementById('statusSel').value;
-  var rows=all.filter(function(m){if(f&&m.floor!==f)return false;if(p&&m.provider!==p)return false;if(st==='infected'&&!m.infected)return false;if(st==='clean'&&m.infected)return false;if(q){var b=(m.host+' '+m.user+' '+m.lip+' '+m.pip+' '+m.how+' '+m.os+' '+m.by).toLowerCase();if(b.indexOf(q)<0)return false;}return true;});
-  document.getElementById('rows').innerHTML=rows.map(function(m){return '<tr><td class="host">'+esc(m.host)+'</td><td>'+esc(m.user)+'</td><td class="mut">'+esc(m.os)+'</td><td><span class="chip">'+esc(m.lip)+'</span></td><td>'+esc(m.floor)+'</td><td class="mut">'+(m.pip?('<span class="chip">'+esc(m.pip)+'</span> '+esc(m.provider)):'—')+'</td><td>'+(m.infected?'<span class="pill crit">infected · '+m.detections+'</span>':'<span class="pill ok">clean</span>')+'</td><td>'+(m.how?'<span class="chip">'+esc(m.how)+'</span>':'<span class="mut">—</span>')+'</td><td class="mut">'+esc(m.by)+'</td></tr>';}).join('');
+  fillSel('floorSel',fn);applyFilters(all);}
+function applyFilters(all){all=all||normalize();var q=document.getElementById('q').value.toLowerCase();var f=document.getElementById('floorSel').value,st=document.getElementById('statusSel').value;
+  var rows=all.filter(function(m){if(f&&m.floor!==f)return false;if(st==='infected'&&!m.infected)return false;if(st==='clean'&&m.infected)return false;if(q){var b=(m.host+' '+m.user+' '+m.lip+' '+m.pip+' '+m.how+' '+m.os+' '+m.by).toLowerCase();if(b.indexOf(q)<0)return false;}return true;});
+  document.getElementById('rows').innerHTML=rows.map(function(m){return '<tr><td class="host">'+esc(m.host)+'</td><td>'+esc(m.user)+'</td><td class="mut">'+esc(m.os)+'</td><td><span class="chip">'+esc(m.lip)+'</span></td><td class="mut">'+(m.pip?('<span class="chip">'+esc(m.pip)+'</span>'):'—')+'</td><td>'+(m.infected?'<span class="pill crit">infected · '+m.detections+'</span>':'<span class="pill ok">clean</span>')+'</td><td>'+(m.how?'<span class="chip">'+esc(m.how)+'</span>':'<span class="mut">—</span>')+'</td><td class="mut">'+esc(m.by)+'</td></tr>';}).join('');
   document.getElementById('empty').hidden=rows.length>0;
   document.getElementById('foot').textContent='Showing '+rows.length+' of '+all.length+' machines. IP→floor/provider from location_map.json.';}
-['q','floorSel','provSel','statusSel'].forEach(function(id){document.getElementById(id).addEventListener('input',function(){applyFilters();});});
+['q','floorSel','statusSel'].forEach(function(id){document.getElementById(id).addEventListener('input',function(){applyFilters();});});
 (function(){var t=document.getElementById('theme');try{var s=localStorage.getItem('guard-theme');if(s)document.documentElement.setAttribute('data-theme',s);}catch(e){}t.addEventListener('click',function(){var c=document.documentElement.getAttribute('data-theme');var dark=c?c==='dark':matchMedia('(prefers-color-scheme:dark)').matches;var n=dark?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('guard-theme',n);}catch(e){}});})();
 function setLive(state,txt){var el=document.getElementById('live');el.className='live '+state;el.textContent=txt;}
 function load(){var tok=tokenQS();var qs=tok?('?token='+encodeURIComponent(tok)):'';
