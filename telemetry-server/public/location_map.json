@@ -1,0 +1,13 @@
+{
+  "_comment": "Edit this to map IPs -> physical location + ISP. NOT hardcoded in the agent; the dashboard resolves at display time, so you can expand any time without redeploying agents. First matching CIDR wins.",
+  "subnets": [
+    { "cidr": "10.10.1.0/24", "floor": "Floor 1", "note": "example - replace with your real subnet" },
+    { "cidr": "10.10.2.0/24", "floor": "Floor 2" },
+    { "cidr": "10.10.3.0/24", "floor": "Floor 3" },
+    { "cidr": "10.10.4.0/24", "floor": "Floor 4" },
+    { "cidr": "10.10.5.0/24", "floor": "Floor 5" }
+  ],
+  "providers": [
+    { "cidr": "0.0.0.0/0", "name": "Unknown ISP", "note": "example - add your 3 providers' public IP ranges (or ASN blocks) here; more specific CIDRs first" }
+  ]
+}

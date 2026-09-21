@@ -1,0 +1,9 @@
+{
+  "name": "guard-telemetry-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Guard fleet telemetry collector + dashboard (Vercel + MongoDB)",
+  "dependencies": {
+    "mongodb": "^6.3.0"
+  }
+}

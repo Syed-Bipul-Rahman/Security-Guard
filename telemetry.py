@@ -49,6 +49,7 @@ def now_iso() -> str:
 
 DEFAULT_CONFIG = {
     "endpoint": "",                                  # your collector URL; empty = write locally only
+    "ingest_token": "",                              # shared secret sent as X-Guard-Token (matches server INGEST_TOKEN)
     "interval_sec": 3600,
     "public_ip_lookup": "https://api.ipify.org",     # empty string disables the outbound lookup
     "send_public_ip": True,
@@ -224,9 +225,10 @@ def send(report: dict, cfg: dict, home: Path) -> dict:
     try:
         import urllib.request
         data = json.dumps(report).encode()
-        req = urllib.request.Request(endpoint, data=data, method="POST",
-                                     headers={"Content-Type": "application/json",
-                                              "User-Agent": "guard-telemetry"})
+        headers = {"Content-Type": "application/json", "User-Agent": "guard-telemetry"}
+        if cfg.get("ingest_token"):
+            headers["X-Guard-Token"] = cfg["ingest_token"]   # shared secret for the collector
+        req = urllib.request.Request(endpoint, data=data, method="POST", headers=headers)
         with urllib.request.urlopen(req, timeout=15) as r:
             return {"status": "sent", "http": r.status}
     except Exception as e:

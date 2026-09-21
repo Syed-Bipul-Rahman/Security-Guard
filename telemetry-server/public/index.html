@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guard Fleet</title>
+<meta name="description" content="Live Guard telemetry dashboard — fleet status by floor, provider, and infection.">
+<style>
+  :root{--bg:#f5f6f8;--panel:#fff;--ink:#1a1d21;--muted:#5b6470;--border:#e2e5ea;--accent:#2f6feb;--crit:#d1242f;--crit-bg:#ffeef0;--ok:#1a7f37;--ok-bg:#eaf7ee;--chip:#eef1f6;--shadow:0 1px 2px rgba(0,0,0,.05),0 4px 12px rgba(0,0,0,.04);}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1017;--panel:#161b22;--ink:#e6edf3;--muted:#9aa4b2;--border:#2a313c;--accent:#4c8bf5;--crit:#ff7b72;--crit-bg:#2d1618;--ok:#3fb950;--ok-bg:#12261a;--chip:#20262f;--shadow:0 1px 2px rgba(0,0,0,.3);}}
+  :root[data-theme="dark"]{--bg:#0d1017;--panel:#161b22;--ink:#e6edf3;--muted:#9aa4b2;--border:#2a313c;--accent:#4c8bf5;--crit:#ff7b72;--crit-bg:#2d1618;--ok:#3fb950;--ok-bg:#12261a;--chip:#20262f;--shadow:0 1px 2px rgba(0,0,0,.3);}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1100px;margin:0 auto;padding:28px 16px 60px;}
+  header{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+  .logo{width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,var(--accent),#7aa2f7);display:grid;place-items:center;color:#fff;font-weight:800;flex:none;}
+  h1{font-size:19px;margin:0;}
+  .live{font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:var(--chip);color:var(--muted);}
+  .live.on{background:var(--ok-bg);color:var(--ok);} .live.demo{background:var(--crit-bg);color:var(--crit);}
+  .sub{color:var(--muted);margin:4px 0 20px;}
+  .theme{margin-left:auto;background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:12px;}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:18px;}
+  .tile{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);}
+  .tile .n{font-size:26px;font-weight:750;} .tile .l{color:var(--muted);font-size:12px;margin-top:2px;}
+  .tile.crit .n{color:var(--crit);} .tile.ok .n{color:var(--ok);}
+  .floors{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px;}
+  .floor{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
+  .floor .fl{font-weight:650;} .floor .meta{color:var(--muted);font-size:12px;margin-top:3px;}
+  .floor.hasinfect{border-color:var(--crit);}
+  .bar{height:6px;border-radius:4px;background:var(--ok);margin-top:8px;overflow:hidden;} .bar>span{display:block;height:100%;background:var(--crit);}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+  .controls input,.controls select{background:var(--panel);border:1px solid var(--border);color:var(--ink);border-radius:8px;padding:8px 10px;font-size:13px;}
+  .controls input{flex:1;min-width:160px;}
+  .tablewrap{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:auto;box-shadow:var(--shadow);}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);white-space:nowrap;}
+  th{color:var(--muted);font-weight:600;font-size:12px;background:var(--bg);position:sticky;top:0;}
+  tr:last-child td{border-bottom:none;} td.host{font-weight:600;}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:650;}
+  .pill.crit{background:var(--crit-bg);color:var(--crit);} .pill.ok{background:var(--ok-bg);color:var(--ok);}
+  .chip{display:inline-block;background:var(--chip);color:var(--muted);border-radius:6px;padding:1px 7px;font-size:11px;font-family:ui-monospace,Menlo,Consolas,monospace;}
+  .mut{color:var(--muted);} .empty{padding:26px;text-align:center;color:var(--muted);}
+  .foot{color:var(--muted);font-size:12px;margin-top:16px;}
+  @media (max-width:720px){th:nth-child(6),td:nth-child(6),th:nth-child(8),td:nth-child(8){display:none;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">G</div><h1>Guard Fleet</h1>
+    <span class="live" id="live">…</span>
+    <button class="theme" id="theme">◐ theme</button>
+  </header>
+  <p class="sub">Live endpoint telemetry — where each machine is (floor / provider, resolved from IP), and what Guard detected. Scoping data for IR &amp; credential rotation, not employee blame.</p>
+  <div class="tiles" id="tiles"></div>
+  <div class="floors" id="floors"></div>
+  <div class="controls">
+    <input id="q" placeholder="search host / user / IP / pattern…">
+    <select id="floorSel"><option value="">All floors</option></select>
+    <select id="provSel"><option value="">All providers</option></select>
+    <select id="statusSel"><option value="">All status</option><option value="infected">Infected</option><option value="clean">Clean</option></select>
+  </div>
+  <div class="tablewrap">
+    <table><thead><tr>
+      <th>Host</th><th>User</th><th>OS</th><th>Local IP</th><th>Floor</th>
+      <th>Public IP → Provider</th><th>Status</th><th>How</th><th>Installed by</th>
+    </tr></thead><tbody id="rows"></tbody></table>
+    <div class="empty" id="empty" hidden>No machines match.</div>
+  </div>
+  <p class="foot" id="foot"></p>
+</div>
+<script>
+var DATA=[], MAP={subnets:[],providers:[]};
+function tokenQS(){ try{ var u=new URL(location.href); var t=u.searchParams.get('token'); if(t){localStorage.setItem('guard-dash-token',t);} return localStorage.getItem('guard-dash-token')||''; }catch(e){return '';} }
+function ipInt(ip){var p=ip.split('.');if(p.length!==4)return null;return((+p[0]<<24)+(+p[1]<<16)+(+p[2]<<8)+(+p[3]))>>>0;}
+function inCidr(ip,cidr){var a=cidr.split('/'),base=ipInt(a[0]),bits=+a[1],t=ipInt(ip);if(base===null||t===null)return false;if(bits===0)return true;var mask=(~0<<(32-bits))>>>0;return(t&mask)===(base&mask);}
+function resolveFloor(ips){for(var i=0;i<ips.length;i++){var ip=ips[i];if(!/^\d+\.\d+\.\d+\.\d+$/.test(ip)||ip.indexOf('127.')===0)continue;for(var j=0;j<MAP.subnets.length;j++){if(inCidr(ip,MAP.subnets[j].cidr))return MAP.subnets[j].floor;}}return 'Unknown';}
+function resolveProvider(ip){if(!ip)return 'Unknown';for(var j=0;j<MAP.providers.length;j++){if(inCidr(ip,MAP.providers[j].cidr))return MAP.providers[j].name;}return 'Unknown';}
+function primaryLocal(ips){for(var i=0;i<ips.length;i++){if(/^\d+\.\d+\.\d+\.\d+$/.test(ips[i])&&ips[i].indexOf('127.')!==0)return ips[i];}return ips[0]||'-';}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function normalize(){return DATA.map(function(d){var h=d.host||{},e=d.events||{},ips=h.local_ips||[];return{host:h.hostname||'?',user:h.username||'?',os:(h.os||'?')+' '+(h.os_version||''),lip:primaryLocal(ips),floor:resolveFloor(ips),pip:h.public_ip||'',provider:resolveProvider(h.public_ip),infected:!!e.infected,how:(e.how&&e.how[0])||'',detections:e.total_detections||0,by:(h.install&&h.install.installed_by)||'?'};});}
+function tile(n,l,c){return '<div class="tile'+(c?' '+c:'')+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
+function fillSel(id,vals){var s=document.getElementById(id);var cur=s.value;s.length=1;vals.forEach(function(v){var o=document.createElement('option');o.value=v;o.textContent=v;s.appendChild(o);});s.value=cur;}
+function render(){var all=normalize();var infected=all.filter(function(m){return m.infected;}).length;var fs={},ps={};all.forEach(function(m){fs[m.floor]=1;if(m.provider)ps[m.provider]=1;});
+  document.getElementById('tiles').innerHTML=[tile(all.length,'machines',''),tile(infected,'infected','crit'),tile(all.length-infected,'clean','ok'),tile(Object.keys(fs).length,'floors',''),tile(Object.keys(ps).length,'providers','')].join('');
+  var byFloor={};all.forEach(function(m){(byFloor[m.floor]=byFloor[m.floor]||[]).push(m);});var fn=Object.keys(byFloor).sort();
+  document.getElementById('floors').innerHTML=fn.map(function(f){var ms=byFloor[f],inf=ms.filter(function(m){return m.infected;}).length,pct=ms.length?Math.round(inf/ms.length*100):0;return '<div class="floor'+(inf?' hasinfect':'')+'"><div class="fl">'+esc(f)+'</div><div class="meta">'+ms.length+' machines · '+(inf?('<b style="color:var(--crit)">'+inf+' infected</b>'):'all clean')+'</div><div class="bar"><span style="width:'+pct+'%"></span></div></div>';}).join('');
+  fillSel('floorSel',fn);fillSel('provSel',Object.keys(ps).sort());applyFilters(all);}
+function applyFilters(all){all=all||normalize();var q=document.getElementById('q').value.toLowerCase();var f=document.getElementById('floorSel').value,p=document.getElementById('provSel').value,st=document.getElementById('statusSel').value;
+  var rows=all.filter(function(m){if(f&&m.floor!==f)return false;if(p&&m.provider!==p)return false;if(st==='infected'&&!m.infected)return false;if(st==='clean'&&m.infected)return false;if(q){var b=(m.host+' '+m.user+' '+m.lip+' '+m.pip+' '+m.how+' '+m.os+' '+m.by).toLowerCase();if(b.indexOf(q)<0)return false;}return true;});
+  document.getElementById('rows').innerHTML=rows.map(function(m){return '<tr><td class="host">'+esc(m.host)+'</td><td>'+esc(m.user)+'</td><td class="mut">'+esc(m.os)+'</td><td><span class="chip">'+esc(m.lip)+'</span></td><td>'+esc(m.floor)+'</td><td class="mut">'+(m.pip?('<span class="chip">'+esc(m.pip)+'</span> '+esc(m.provider)):'—')+'</td><td>'+(m.infected?'<span class="pill crit">infected · '+m.detections+'</span>':'<span class="pill ok">clean</span>')+'</td><td>'+(m.how?'<span class="chip">'+esc(m.how)+'</span>':'<span class="mut">—</span>')+'</td><td class="mut">'+esc(m.by)+'</td></tr>';}).join('');
+  document.getElementById('empty').hidden=rows.length>0;
+  document.getElementById('foot').textContent='Showing '+rows.length+' of '+all.length+' machines. IP→floor/provider from location_map.json.';}
+['q','floorSel','provSel','statusSel'].forEach(function(id){document.getElementById(id).addEventListener('input',function(){applyFilters();});});
+(function(){var t=document.getElementById('theme');try{var s=localStorage.getItem('guard-theme');if(s)document.documentElement.setAttribute('data-theme',s);}catch(e){}t.addEventListener('click',function(){var c=document.documentElement.getAttribute('data-theme');var dark=c?c==='dark':matchMedia('(prefers-color-scheme:dark)').matches;var n=dark?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('guard-theme',n);}catch(e){}});})();
+function setLive(state,txt){var el=document.getElementById('live');el.className='live '+state;el.textContent=txt;}
+function load(){var tok=tokenQS();var qs=tok?('?token='+encodeURIComponent(tok)):'';
+  Promise.all([
+    fetch('/api/fleet'+qs).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}),
+    fetch('/location_map.json').then(function(r){return r.ok?r.json():null;}).catch(function(){return null;})
+  ]).then(function(res){DATA=res[0]||[];if(res[1])MAP=res[1];setLive('on','live · '+DATA.length+' machines');render();})
+    .catch(function(e){setLive('demo','offline: '+e.message);render();});}
+setInterval(load,30000); load();
+</script>
+</body>
+</html>
