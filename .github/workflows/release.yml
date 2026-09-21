@@ -49,11 +49,14 @@ jobs:
         env:
           PUBKEY: ${{ secrets.GUARD_UPDATE_PUBKEY }}
           UPURL: ${{ secrets.GUARD_UPDATE_URL }}
+          TELURL: ${{ secrets.GUARD_TELEMETRY_URL }}
+          INGEST: ${{ secrets.GUARD_INGEST_TOKEN }}
           VER: ${{ steps.v.outputs.version }}
         run: |
           python - <<'PY'
           import os, re, pathlib
           pub, url, ver = os.environ["PUBKEY"], os.environ["UPURL"], os.environ["VER"]
+          telurl, ingest = os.environ.get("TELURL", ""), os.environ.get("INGEST", "")
           up = pathlib.Path("updater.py"); s = up.read_text()
           s = re.sub(r'PUBKEY_HEX = os\.environ\.get\("GUARD_UPDATE_PUBKEY", "[^"]*"\)',
                      f'PUBKEY_HEX = os.environ.get("GUARD_UPDATE_PUBKEY", "{pub}")', s)
@@ -63,6 +66,10 @@ jobs:
           up.write_text(s)
           g = pathlib.Path("guard.py"); t = g.read_text()
           t = re.sub(r'VERSION = "[^"]*"', f'VERSION = "{ver}"', t)
+          t = re.sub(r'TELEMETRY_URL = os\.environ\.get\("GUARD_TELEMETRY_URL", "[^"]*"\)',
+                     f'TELEMETRY_URL = os.environ.get("GUARD_TELEMETRY_URL", "{telurl}")', t)
+          t = re.sub(r'INGEST_TOKEN = os\.environ\.get\("GUARD_INGEST_TOKEN", "[^"]*"\)',
+                     f'INGEST_TOKEN = os.environ.get("GUARD_INGEST_TOKEN", "{ingest}")', t)
           g.write_text(t)
           print("baked", ver, url, pub[:12] + "...")
           PY

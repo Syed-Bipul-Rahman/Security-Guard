@@ -31,7 +31,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION = "1.0.8"
+VERSION = "1.0.9"
+
+# Telemetry destination — baked at release time from CI vars (empty in source).
+TELEMETRY_URL = os.environ.get("GUARD_TELEMETRY_URL", "")
+INGEST_TOKEN = os.environ.get("GUARD_INGEST_TOKEN", "")
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +169,35 @@ def _write_watch_config() -> None:
         pass
 
 
+def _write_telemetry_config() -> None:
+    """Write the telemetry endpoint/token at install time so the machine reports to
+    the dashboard with no manual config. No-op if no endpoint was baked in."""
+    if not TELEMETRY_URL:
+        return
+    home = Path(os.environ.get("GUARD_HOME", "/var/lib/guard"))
+    cfg_path = home / "telemetry.config.json"
+    if cfg_path.exists():
+        return  # don't clobber a tuned config
+    cfg = {"endpoint": TELEMETRY_URL}
+    if INGEST_TOKEN:
+        cfg["ingest_token"] = INGEST_TOKEN
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _send_initial_telemetry() -> None:
+    """POST one report at install so the machine shows on the dashboard right away
+    (as clean). The watcher then keeps it current — updating on every detection."""
+    try:
+        from telemetry import run_once
+        run_once(Path(os.environ.get("GUARD_HOME", "/var/lib/guard")))
+    except Exception:
+        pass
+
+
 def _self_exe() -> str:
     """Path used to launch this agent in a service unit."""
     if getattr(sys, "frozen", False):
@@ -247,6 +280,8 @@ def cmd_install(uninstall: bool) -> int:
     if not uninstall:
         _write_install_stamp()
         _write_watch_config()
+        _write_telemetry_config()
+        _send_initial_telemetry()   # appear on the dashboard immediately (clean or not)
     if plat == "darwin":
         return _install_macos(uninstall)
     if plat.startswith("linux"):
