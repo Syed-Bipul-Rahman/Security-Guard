@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Guard installer (Linux/macOS). Served at https://security.syedbipul.me/guard.sh
-#   curl -fsSL https://security.syedbipul.me/guard.sh | sudo bash
+# Guard installer (Linux/macOS). Served at https://security.sparktech.agency/guard.sh
+#   curl -fsSL https://security.sparktech.agency/guard.sh | sudo bash
 #
 # Downloads the single `guard` binary for this platform from GitHub Releases,
 # verifies its SHA-256, installs it to /usr/local/bin, and sets up the auto-start
@@ -37,7 +37,7 @@ asset="guard-${platform}"
 echo "Guard installer: $platform"
 if [ "$(id -u)" -ne 0 ]; then
   echo "This installs a system service and needs root. Re-run with sudo:" >&2
-  echo "  curl -fsSL https://security.syedbipul.me/guard.sh | sudo bash" >&2
+  echo "  curl -fsSL https://security.sparktech.agency/guard.sh | sudo bash" >&2
   exit 1
 fi
 

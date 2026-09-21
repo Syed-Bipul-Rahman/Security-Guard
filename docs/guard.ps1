@@ -1,6 +1,6 @@
-# Guard installer (Windows). Served at https://security.syedbipul.me/guard.ps1
+# Guard installer (Windows). Served at https://security.sparktech.agency/guard.ps1
 #   Run in an ELEVATED PowerShell (Admin):
-#     irm https://security.syedbipul.me/guard.ps1 | iex
+#     irm https://security.sparktech.agency/guard.ps1 | iex
 #
 # Downloads guard-windows-<arch>.exe from GitHub Releases, verifies its SHA-256,
 # installs to C:\Program Files\Guard, adds it to PATH, and registers an auto-start

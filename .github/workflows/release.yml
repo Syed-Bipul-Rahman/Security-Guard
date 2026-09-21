@@ -27,7 +27,8 @@ jobs:
           - { os: ubuntu-latest,    plat: linux-x64 }     # Linux x86_64
           - { os: ubuntu-24.04-arm, plat: linux-arm64 }   # Linux ARM64
           - { os: macos-14,         plat: darwin-arm64 }  # macOS Apple Silicon
-          - { os: macos-13,         plat: darwin-x64 }    # macOS Intel
+          # macos-13 (Intel) removed: GitHub Intel-Mac runners can queue 24h and time out.
+          # Add back later if Intel-Mac support is needed and runners are available.
           - { os: windows-latest,   plat: windows-x64 }   # Windows x86_64
           - { os: windows-11-arm,   plat: windows-arm64 } # Windows on ARM
     runs-on: ${{ matrix.os }}
