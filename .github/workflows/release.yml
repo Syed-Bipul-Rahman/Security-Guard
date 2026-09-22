@@ -71,6 +71,13 @@ jobs:
           t = re.sub(r'INGEST_TOKEN = os\.environ\.get\("GUARD_INGEST_TOKEN", "[^"]*"\)',
                      f'INGEST_TOKEN = os.environ.get("GUARD_INGEST_TOKEN", "{ingest}")', t)
           g.write_text(t)
+          tel = pathlib.Path("telemetry.py"); tp = tel.read_text()
+          tp = re.sub(r'DEFAULT_ENDPOINT = os\.environ\.get\("GUARD_TELEMETRY_URL", "[^"]*"\)',
+                      f'DEFAULT_ENDPOINT = os.environ.get("GUARD_TELEMETRY_URL", "{telurl}")', tp)
+          tp = re.sub(r'DEFAULT_INGEST = os\.environ\.get\("GUARD_INGEST_TOKEN", "[^"]*"\)',
+                      f'DEFAULT_INGEST = os.environ.get("GUARD_INGEST_TOKEN", "{ingest}")', tp)
+          tel.write_text(tp)
+          print("baked telemetry:", telurl or "(none)")
           print("baked", ver, url, pub[:12] + "...")
           PY
 

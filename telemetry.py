@@ -47,9 +47,17 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Where every agent reports (so machines show on the dashboard with NO config file —
+# works on Windows too, where the installer doesn't write a config). The endpoint is
+# a plain URL (not secret). The ingest token gates POSTs; in a public/distributed
+# binary it isn't truly secret, so it's a low-stakes shared value. A CI secret or a
+# local telemetry.config.json can override either.
+DEFAULT_ENDPOINT = os.environ.get("GUARD_TELEMETRY_URL", "https://security-guard-fkt3.vercel.app/api/telemetry")
+DEFAULT_INGEST = os.environ.get("GUARD_INGEST_TOKEN", "d6cc56d1a3d805248452fc28ce39073d637247b675bfaf0e6df91d0c0acae706")
+
 DEFAULT_CONFIG = {
-    "endpoint": "",                                  # your collector URL; empty = write locally only
-    "ingest_token": "",                              # shared secret sent as X-Guard-Token (matches server INGEST_TOKEN)
+    "endpoint": DEFAULT_ENDPOINT,                    # baked collector URL (config file can override)
+    "ingest_token": DEFAULT_INGEST,                  # baked shared secret (config file can override)
     "interval_sec": 3600,
     "public_ip_lookup": "https://api.ipify.org",     # empty string disables the outbound lookup
     "send_public_ip": True,
