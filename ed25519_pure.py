@@ -7,7 +7,7 @@ crypto dependency (keeps the single binary self-contained). The reference impl i
 slow, but the agent verifies one small manifest occasionally, so speed is irrelevant.
 
 verify() is what the deployed binary uses. sign()/publickey() are for the offline
-release signer (keep the seed/secret key OUT of the binary and off employee machines).
+release signer (keep the seed/secret key OUT of the binary and off user machines).
 """
 
 from __future__ import annotations

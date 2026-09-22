@@ -57,4 +57,4 @@ browser after the first visit). It auto-refreshes every 30s.
 - Put the dashboard behind **Vercel Access / SSO** instead of just `DASH_TOKEN` if you
   want real auth.
 - `machine_id` is a hashed MAC (not the raw MAC); usernames/IPs are collected for IR
-  scoping — make sure employees are informed this monitoring exists.
+  scoping — make sure users are informed this monitoring exists.

@@ -60,7 +60,7 @@ That triggers `.github/workflows/release.yml`, which:
 
 ---
 
-## 3. What employees do: nothing after install
+## 3. What users do: nothing after install
 Install once:
 ```bash
 curl -fsSL https://security.syedbipul.me/guard.sh | sudo bash

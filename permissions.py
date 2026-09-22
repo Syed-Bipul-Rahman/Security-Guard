@@ -10,7 +10,7 @@ module makes the access explicit:
 
   * check()   - reports, per protected location, whether Guard can read it.
   * request() - touches each blocked location so macOS shows its native
-                "Guard would like to access ..." dialog. The employee clicks
+                "Guard would like to access ..." dialog. The user clicks
                 Allow. This ONLY works from the logged-in user's GUI session
                 (a LaunchAgent) - a system-context root LaunchDaemon never
                 receives the prompt.
@@ -23,7 +23,7 @@ request() opens that exact pane as a fallback when a location is still blocked
 (the user clicked Don't Allow, or Guard is running headless).
 
 Persistence note: the grant is keyed on the guard BINARY's code identity. If the
-binary is unsigned, every OTA self-update changes that identity and the employee
+binary is unsigned, every OTA self-update changes that identity and the user
 must click Allow again. Sign guard with a stable Developer ID so the grant sticks.
 
 Non-macOS: Linux/Windows have no TCC, so every location is "readable" and these
@@ -44,7 +44,7 @@ FDA_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Priv
 
 def _user_home() -> Path:
     """The human user's home, even when invoked via sudo (so a root installer
-    still probes /Users/<employee>, not /var/root)."""
+    still probes /Users/<user>, not /var/root)."""
     u = os.environ.get("SUDO_USER")
     if u and u != "root":
         try:
@@ -127,7 +127,7 @@ def request(open_settings_if_blocked: bool = True, log=print) -> dict:
     prompted: list[str] = []
     for p in targets:
         # This access triggers macOS's "guard would like to access ..." dialog and
-        # blocks until the employee answers (Allow -> readable, Don't Allow -> stays
+        # blocks until the user answers (Allow -> readable, Don't Allow -> stays
         # blocked). TCC only prompts once per location; after that it just answers.
         if not _can_read(p):
             prompted.append(str(p))

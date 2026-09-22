@@ -243,7 +243,7 @@ def _install_macos(uninstall: bool) -> int:
     exe = _self_exe()
     # No GUARD_HOME -> the agent (running as the user) uses ~/.guard, which it owns
     # and can write, and its default watch roots (~/Desktop, ~/Downloads, ...) expand
-    # to the employee's home. StandardOut/Err omitted (watcher writes ~/.guard/watcher.log).
+    # to the user's home. StandardOut/Err omitted (watcher writes ~/.guard/watcher.log).
     plist = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -316,7 +316,7 @@ def cmd_install(uninstall: bool) -> int:
     if not uninstall and plat != "darwin":
         # Linux/Windows: the service runs as root/SYSTEM out of /var/lib/guard, so
         # seed its state there now. macOS runs as a per-user LaunchAgent out of the
-        # employee's own ~/.guard (which it owns) and seeds itself on first run — we
+        # user's own ~/.guard (which it owns) and seeds itself on first run — we
         # deliberately DON'T write root-owned files into the user's home here.
         _write_install_stamp()
         _write_watch_config()

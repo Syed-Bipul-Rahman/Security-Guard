@@ -1,16 +1,16 @@
 # Guard — supply-chain malware agent
 
-One self-contained `guard` binary for every employee machine (**Linux / macOS /
+One self-contained `guard` binary for every user machine (**Linux / macOS /
 Windows**). It runs always-on, **detects** supply-chain malware (the fake-font
 dropper / `.vscode` auto-run / obfuscated `eval` C2 family), **auto-removes** it —
 excising the injected code while keeping your real files — and **warns the user**
 with a desktop notification, like a consumer antivirus. It self-updates over the
-air and reports fleet status to a live dashboard.
+air and can report status to an optional, self-hostable dashboard.
 
 - **Repo:** https://github.com/Syed-Bipul-Rahman/Security-Guard
 - **Releases:** https://github.com/Syed-Bipul-Rahman/Security-Guard/releases
 - **Install site:** https://security.sparktech.agency
-- **Fleet dashboard:** https://security-guard-fkt3.vercel.app
+- **Demo dashboard:** https://security-guard-fkt3.vercel.app
 
 ---
 
@@ -53,8 +53,9 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
   (Ed25519-verified, fail-closed, downgrade-protected). No manual step.
 - **Malicious-dependency check** — versions matched against a GitHub-advisory
   malware blocklist (120k+ names).
-- **Fleet telemetry** — every machine reports install + status to the dashboard
-  (clean or infected), so you see the whole fleet at a glance.
+- **Optional telemetry** — machines can report install + status (clean or
+  infected) to a **configurable, self-hostable** dashboard endpoint; point it at
+  your own server or leave it off.
 - **Host IR triage** — reboot/persistence/recon/flood forensics, OS-native.
 - **Kernel telemetry (Windows)** — auto-configures Microsoft Sysmon.
 - **macOS permissions helper** — raises the native "Allow" prompts for Desktop /
@@ -182,9 +183,6 @@ Code layout: `guard.py` (entrypoint/CLI) · `scanner.py` (orchestrator) ·
 Please keep the project's boundaries: it detects, removes injected payloads with a
 reversible backup, and reports — it does **not** rewrite remote git history,
 force-push, or carry a broad-scope GitHub token on the endpoint.
-
-Windows code signing for OSS is tracked in
-[`docs/WINDOWS-CODE-SIGNING.md`](docs/WINDOWS-CODE-SIGNING.md).
 
 ---
 

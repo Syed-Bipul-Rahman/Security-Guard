@@ -269,7 +269,7 @@ class Watcher:
         """Resolve configured watch roots. On Windows the service runs as SYSTEM,
         so a '~'-based root (e.g. '~/Desktop') must NOT expand to SYSTEM's profile —
         expand it to that same subpath under EVERY real user profile instead, so the
-        employee's C:\\Users\\<name>\\Desktop is actually watched. Absolute roots and
+        user's C:\\Users\\<name>\\Desktop is actually watched. Absolute roots and
         all non-Windows platforms keep normal expanduser behavior."""
         out: list[Path] = []
         is_win = sys.platform.startswith("win")
@@ -597,7 +597,7 @@ class Watcher:
         TCC blocks Desktop/Documents/Downloads/removable volumes for a process that
         hasn't been allowed; a silently-unreadable root makes Guard blind. If we're
         running in the user's GUI session (LaunchAgent), raise the native "Allow"
-        prompts so the employee just clicks Allow; otherwise log a clear warning."""
+        prompts so the user just clicks Allow; otherwise log a clear warning."""
         blocked = []
         for r in self.roots:
             if not r.exists():

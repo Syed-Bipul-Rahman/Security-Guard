@@ -7,11 +7,11 @@ CONFIGURABLE collector endpoint (never hardcoded here). Used to answer, for the
 fleet: which machine/account is affected, where it is (floor/provider, resolved
 from IP by config), how it got hit, and the pattern.
 
-IMPORTANT (governance): this is scoping data for IR + credential rotation, NOT an
-employee-blame tool. Malware commits/actions appear under the identity of whoever
-was compromised - treat an "affected" account as a VICTIM to clean up, not a culprit,
-unless corroborated. Employees must be told this monitoring exists (it's a mandatory
-internal agent).
+IMPORTANT (governance): this is scoping data for IR + credential rotation, NOT a
+blame tool. Malware commits/actions appear under the identity of whoever was
+compromised - treat an "affected" account as a VICTIM to clean up, not a culprit,
+unless corroborated. Where telemetry is enabled, users should be told this
+reporting exists.
 
 What it sends (all fields best-effort; failures never crash the agent):
   host:    hostname, os+version, username, agent_version, machine_id (MAC-derived)
