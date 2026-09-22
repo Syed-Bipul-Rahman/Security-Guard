@@ -387,8 +387,15 @@ class Watcher:
                     from updater import Updater
                     res = Updater(log=self.log).check_and_apply()
                     if res.get("binary_updated"):
-                        self.log("new binary installed via OTA - exiting so the service restarts it")
-                        self._running = False  # supervisor (launchd/systemd KeepAlive) restarts -> runs new binary
+                        self.log("new binary installed via OTA - restarting to run it")
+                        try:
+                            self._store.close()
+                        except Exception:
+                            pass
+                        # Unix: launchd/systemd restart on any exit (0 fine).
+                        # Windows: the scheduled task restarts on FAILURE, so exit
+                        # non-zero to trigger it (a clean exit wouldn't relaunch).
+                        os._exit(1 if sys.platform.startswith("win") else 0)
                 except Exception as exc:
                     self.log(f"update check error: {exc}")
             for _ in range(int(self.interval * 10)):

@@ -181,10 +181,19 @@ class Updater:
         try:
             tmp.chmod(target.stat().st_mode)
             if sys.platform.startswith("win"):
-                # can't replace a running .exe; stage it - a bootstrap swaps on next start
-                pending = target.with_suffix(".pending.exe")
-                os.replace(tmp, pending)
-                self.log(f"updater: staged {newver} at {pending}; will apply on next restart")
+                # Windows can't overwrite a running .exe, but it CAN rename one.
+                # Move the running exe aside (rollback copy), then install the new one
+                # at guard.exe. The running process keeps executing the old (now-renamed)
+                # image; the NEXT launch runs the new guard.exe.
+                old = target.with_suffix(".old.exe")
+                try:
+                    if old.exists():
+                        old.unlink()
+                except OSError:
+                    pass
+                os.replace(str(target), str(old))   # rename running guard.exe -> guard.old.exe
+                os.replace(str(tmp), str(target))   # put new binary at guard.exe
+                self.log(f"updater: binary updated {self.current} -> {newver}; restart to run it")
                 return True
             shutil.copy2(target, target.with_suffix(".bak"))  # rollback copy
             os.replace(tmp, target)                            # atomic swap (Unix)

@@ -308,8 +308,21 @@ def _harden_ssl() -> None:
         pass
 
 
+def _cleanup_stale() -> None:
+    """Remove a leftover guard.old.exe left by a previous Windows OTA rename-swap."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        old = Path(sys.executable).with_suffix(".old.exe")
+        if old.exists():
+            old.unlink()
+    except OSError:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     _harden_ssl()
+    _cleanup_stale()
     argv = argv if argv is not None else sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(USAGE); return 0
