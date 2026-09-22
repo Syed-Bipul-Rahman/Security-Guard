@@ -1,40 +1,192 @@
-# Security Guard — one binary, one command
+# Guard — supply-chain malware agent
 
-A single self-contained `guard` binary for every employee machine (Linux/macOS/
-Windows). It **detects and reports**; it never rewrites git history or force-pushes
-— remediation stays a reviewed, human-triggered process.
+One self-contained `guard` binary for every employee machine (**Linux / macOS /
+Windows**). It runs always-on, **detects** supply-chain malware (the fake-font
+dropper / `.vscode` auto-run / obfuscated `eval` C2 family), **auto-removes** it —
+excising the injected code while keeping your real files — and **warns the user**
+with a desktop notification, like a consumer antivirus. It self-updates over the
+air and reports fleet status to a live dashboard.
 
-## Install (one command)
-```bash
-curl -fsSL https://security.syedbipul.me/guard.sh | sudo bash
-```
-The bootstrap downloads the `guard` binary, verifies its SHA-256, installs it, and
-runs `guard install` to start the always-on service (auto-start on boot, restart on
-crash). Windows: `irm https://security.syedbipul.me/guard.ps1 | iex`.
-
-## One command, everything (`guard <cmd>`)
-| Command | What it does |
-|---------|--------------|
-| `guard scan <path>` | full tree scan: fingerprints, disguised droppers, `.vscode` auto-run, workflow baseline, **malicious deps** |
-| `guard scan-git <path>` | the above **plus** every added line across git history |
-| `guard open <path>` | pre-open check — safe to open this folder in VS Code? |
-| `guard watch` | the always-on filesystem watcher (what the service runs) |
-| `guard triage` | host IR triage (reboots / persistence / recon / SYN-flood / SSH) |
-| `guard deps update` | refresh the GitHub malware-package blocklist (123k+ names) |
-| `guard deps check <path>` | check a project's dependencies against the blocklist |
-| `guard install` / `guard uninstall` | set up / remove the service |
-| `guard version` | version |
-
-You never run the individual `.py`/`.sh` files — they are internal modules the one
-binary carries. Build the binary with `bash build/build.sh` (per OS; PyInstaller
-does not cross-compile). Verified: a 9.3 MB standalone executable with all engines
-and the malware blocklist bundled.
+- **Repo:** https://github.com/Syed-Bipul-Rahman/Security-Guard
+- **Releases:** https://github.com/Syed-Bipul-Rahman/Security-Guard/releases
+- **Install site:** https://security.sparktech.agency
+- **Fleet dashboard:** https://security-guard-fkt3.vercel.app
 
 ---
 
-### Internals (for maintainers)
-Detection engine for the sparktechagency supply-chain incident. It **detects and
-reports**; it never rewrites git history or force-pushes.
+## Install (one command)
+
+**macOS / Linux** (installs the always-on service, auto-starts on boot):
+```bash
+curl -fsSL https://security.sparktech.agency/guard.sh | sudo bash
+```
+
+**Windows** (run in an **elevated** PowerShell):
+```powershell
+irm https://security.sparktech.agency/guard.ps1 | iex
+```
+
+The installer downloads the right binary for your OS/arch, verifies its SHA-256,
+installs it, registers the auto-start watcher service, trusts Guard in Microsoft
+Defender, and (Windows) auto-configures Sysmon. Supported targets: `linux-x64`,
+`linux-arm64`, `darwin-arm64`, `windows-x64`, `windows-arm64`.
+
+Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
+
+---
+
+## Features
+
+- **Always-on watcher** — detects repo clones, pulls/checkouts, new project dirs,
+  and downloaded files, and scans them automatically. Bounded to <10% RAM.
+- **Auto-remediation (default on)** — on a critical hit it *removes the threat*,
+  not just alerts:
+  - **excises** an injected malicious IIFE from a real source file (keeps the
+    imports/config around it),
+  - **quarantines** whole-file droppers (a fake `.woff2` that's actually JS),
+  - **strips** `task.allowAutomaticTasks` and `folderOpen` dropper tasks from
+    `.vscode`.
+  Every change is backed up first and is reversible (`guard restore`).
+- **Desktop notifications** — a "Threat neutralized" popup on detection (Windows
+  alert into the active session, macOS Notification Center, Linux `notify-send`).
+- **OTA auto-update** — the agent checks a signed manifest and updates itself
+  (Ed25519-verified, fail-closed, downgrade-protected). No manual step.
+- **Malicious-dependency check** — versions matched against a GitHub-advisory
+  malware blocklist (120k+ names).
+- **Fleet telemetry** — every machine reports install + status to the dashboard
+  (clean or infected), so you see the whole fleet at a glance.
+- **Host IR triage** — reboot/persistence/recon/flood forensics, OS-native.
+- **Kernel telemetry (Windows)** — auto-configures Microsoft Sysmon.
+- **macOS permissions helper** — raises the native "Allow" prompts for Desktop /
+  Documents / Downloads / removable disks.
+
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `guard scan <path>` | full tree scan: fingerprints, disguised droppers, `.vscode` auto-run, workflows, malicious deps |
+| `guard scan-git <path>` | the above **plus** every added line across git history |
+| `guard open <path>` | pre-open check — is it safe to open this folder in VS Code? |
+| `guard clean <path>` | **remove** injected malware in place (excise/quarantine), backing up first |
+| `guard restore <path>` | undo a clean/quarantine from the backup store |
+| `guard watch` | the always-on filesystem watcher (what the service runs) |
+| `guard triage` | host IR triage (reboots / persistence / recon / flood) |
+| `guard permissions [request]` | check disk access; on macOS raise the "Allow" prompts |
+| `guard notify-test` | show a sample threat popup (verify desktop alerts work) |
+| `guard deps update` | refresh the GitHub malware-package blocklist |
+| `guard deps check <path>` | check a project's dependencies against the blocklist |
+| `guard update` | manual OTA check (the service also does this automatically) |
+| `guard telemetry` | send a status report now |
+| `guard install` / `guard uninstall` | set up / remove the auto-start service |
+| `guard version` | print version |
+
+Exit codes for scans: `0` clean, `1` infected (a `critical` finding), `2` usage/error.
+
+---
+
+## Usage
+
+```bash
+# Scan a working tree (fast, no git needed)
+guard scan /path/to/repo
+
+# Scan the tree AND every added line across all commits/branches
+guard scan-git /path/to/repo
+
+# Pre-open gate: exit 1 means DO NOT OPEN this folder in VS Code
+guard open /path/to/repo
+
+# Manually clean an infected repo (the service does this automatically), then undo:
+guard clean /path/to/repo
+guard restore /path/to/repo/vite.config.ts
+```
+
+**Auto-clean is automatic.** You do **not** run `guard clean` by hand in normal
+use — the watcher service cleans every detection on its own and pops a
+"Threat neutralized" alert. `guard clean` is only the manual/on-demand version.
+To make a machine alert-only (no auto-edit), set `"remediate": false` in
+`<GUARD_HOME>/watcher.config.json`.
+
+---
+
+## How auto-remediation handles the attack
+
+The attack injects a payload into an otherwise-legitimate file (a malicious IIFE
+using `atob(process.env.AUTH_API_KEY)` + `eval(...)` bolted above your real
+`vite.config.ts`), and the attacker **amends the original commit** so `git log`
+looks clean. So Guard fixes the **working tree by content**, never git history:
+
+- It locates the injected block with a string/comment/template-aware **bracket
+  matcher** and removes exactly that span — imports and `export default
+  defineConfig(...)` are untouched. A source file is **never deleted**; if the
+  bounds are ambiguous it refuses and flags for manual review (fail-safe).
+- After cleaning, commit the fix forward: `git add -A && git commit -m "remove injected payload"`.
+  (Don't reset/cherry-pick — the forged history can't be trusted.)
+
+---
+
+## Configuration
+
+`GUARD_HOME` (defaults: `/var/lib/guard` for the Linux/Windows service,
+`~/.guard` for the macOS user agent) holds:
+
+- `watcher.config.json` — watch roots, `remediate`, `notify`, poll interval, memory budget
+- `alerts.jsonl` — every detection (audit)
+- `watcher.log` — activity
+- `quarantine/` — backups of everything remediated + `index.jsonl` (for `guard restore`)
+
+---
+
+## Build from source
+
+The shipped artifact is a single PyInstaller binary; the `.py`/`.sh` files are
+internal modules it carries (you never run them directly). PyInstaller does not
+cross-compile, so build on each target OS:
+
+```bash
+python -m pip install --upgrade pyinstaller certifi
+pyinstaller build/guard.spec --distpath build/dist --clean --noconfirm
+./build/dist/guard version
+```
+
+Releases are built for all five platforms by `.github/workflows/release.yml` on a
+`git tag vX.Y.Z`, which also signs the OTA manifest and publishes the GitHub Release.
+
+---
+
+## Contributing
+
+Contributions are welcome — especially new detection signatures.
+
+1. **Fork** and create a feature branch off `main`.
+2. **Signatures are data, not code.** Most new IOCs go in `signatures.json`
+   (fingerprints, dropper paths, `.vscode` rules); the engines reload it, no code
+   change needed. Add a matching fixture under `testdata/`.
+3. **Add tests / fixtures** for anything you change, and keep false positives at
+   zero (clean controls must still pass).
+4. Run the engines locally:
+   ```bash
+   guard scan testdata/<your-fixture>
+   ```
+5. **Open a PR** describing the technique, the signature, and the fixture.
+
+Code layout: `guard.py` (entrypoint/CLI) · `scanner.py` (orchestrator) ·
+`fingerprint_matcher.py` · `vscode_guard.py` · `magic_bytes.py` ·
+`workflow_baseline.py` · `dep_blocklist.py` (detection) · `watcher.py` (service) ·
+`remediator.py` (auto-clean) · `notifier.py` (alerts) · `updater.py` (OTA) ·
+`telemetry.py` (dashboard) · `permissions.py` (macOS access) · `memguard.py` +
+`snapshot_store.py` (memory-bounded scanning).
+
+Please keep the project's boundaries: it detects, removes injected payloads with a
+reversible backup, and reports — it does **not** rewrite remote git history,
+force-push, or carry a broad-scope GitHub token on the endpoint.
+
+Windows code signing for OSS is tracked in
+[`docs/WINDOWS-CODE-SIGNING.md`](docs/WINDOWS-CODE-SIGNING.md).
+
+---
 
 ## The attack, in one paragraph
 
@@ -42,145 +194,14 @@ A JS dropper was committed disguised as a font (`public/fonts/fa-solid-400.woff2
 A `.vscode/tasks.json` task with `"runOn": "folderOpen"` plus
 `"task.allowAutomaticTasks": true` in `settings.json` makes VS Code **auto-execute
 that dropper the moment a developer opens the folder — no click required**. The
-dropper injects an obfuscated C2 payload into build/config files (`vite.config.js`,
-`postcss.config.js`, `src/server.ts`, …) and/or an `eval(proxyInfo)` IIFE that
-pulls code from `auth-confirm-ten.vercel.app`, then commits under the victim's git
-identity. That is why one attack shows up across ~30 developers and 38 repos: it
-re-infects on every folder open. **The endpoint is the vector — hence Guard.**
+dropper injects an obfuscated C2 payload / an `eval(proxyInfo)` IIFE (pulling code
+from `auth-confirm-ten.vercel.app`) into build/config files, then commits under the
+victim's git identity — which is why one attack shows up across dozens of
+developers and repos: it re-infects on every folder open. **The endpoint is the
+vector — hence Guard.**
 
-## Files
+---
 
-| File | Purpose |
-|------|---------|
-| `signatures.json` | Canonical, machine-loadable signature set (the source of truth for the binary) |
-| `signatures.yaml` | Same data in YAML, for CI/tooling that prefers it |
-| `magic_bytes.py` | Detects JS/text droppers disguised with a binary extension (fake fonts/images) |
-| `vscode_guard.py` | Pre-open guard: is it safe to open this repo in VS Code? (highest-value check) |
-| `fingerprint_matcher.py` | Literal + regex + combo matching over file content **and** git diffs |
-| `workflow_baseline.py` | Per-repo approved-workflow baseline; turns filename *signals* into confirmed *verdicts* |
-| `scanner.py` | Orchestrator: runs all engines over a tree and (optionally) git history |
-| `watcher.py` | **Always-on** filesystem watcher: detects clone/pull/checkout, new dirs, downloads → scans |
-| `snapshot_store.py` | SQLite-backed path snapshot (disk, not RAM) so memory stays flat on huge trees |
-| `memguard.py` | Computes a 10%-of-RAM budget; throttles the watcher if RSS approaches it |
-| `hooks/guard-scan-hook.sh` | Global git hook body (post-checkout/merge/rewrite) — scans every clone/pull before you open it |
-| `service/` | launchd (macOS) / systemd (Linux) / scheduled-task (Windows) definitions for boot-start + keep-alive |
-| `install.sh` | Per-device installer: copies app, wires global git hooks, installs+starts the service |
-| `testdata/` | Fixtures reproducing every technique + clean controls |
+## License
 
-## Always-on agent (persistence + monitoring)
-
-The `watcher.py` service is the "runs after restart/shutdown, watches the device"
-layer. It is installed by `install.sh` as a launchd agent / systemd user service /
-Windows scheduled task with **RunAtLoad + KeepAlive**, so it starts on login/boot
-and restarts on crash.
-
-What it watches (configurable in `<GUARD_HOME>/watcher.config.json`):
-
-| Signal | How it's detected | Action |
-|--------|-------------------|--------|
-| repo **cloned** | new `.git/` directory appears | full scan + guard-open |
-| **pull/fetch/checkout** | `.git/HEAD`, `FETCH_HEAD`, refs change | rescan repo |
-| new **directory** | appears under a watch root | scan if it resolves to a repo |
-| **downloaded file** | new `.woff2/.js/.env/...` outside any repo | single-file magic-byte + fingerprint scan |
-
-Alerts are written to `<GUARD_HOME>/alerts.jsonl`; activity to `watcher.log`.
-An optional `quarantine_cmd` in the config is invoked on a hit (reversible, logged).
-
-Three hardening lessons already baked in from testing:
-- **Watch-root boundary:** `_repo_root` never ascends above a watch root, so a
-  download in a folder that happens to sit inside a large git repo (e.g. the home
-  dir being a repo) can't trigger a scan of that whole outer repo.
-- **Batched + debounced:** one clone triggers exactly one repo scan (not one per
-  file), with a 30s per-repo debounce, so there's no alert storm.
-- **Bounded memory (< 10% RAM):** the path snapshot lives in SQLite
-  (`snapshot_store.py`), not a RAM dict, and is processed in 2000-path batches, so
-  memory does not scale with tree size. File reads are capped (5 MB for text,
-  header-only for binaries). `memguard.py` computes a budget of 10% of system RAM
-  and throttles (gc + pause) if RSS approaches it; an opt-in `RLIMIT_AS` ceiling is
-  a hard backstop. **Measured: ~30 MB peak scanning 30,600 files (~1.9% of 16 GB).**
-
-### Two layers, defense in depth
-1. **Git hooks** (`install.sh` sets `core.hooksPath` globally) catch clone/pull at
-   the moment git runs — synchronous, before the editor opens.
-2. **Watcher service** catches everything the hooks can't see: downloads, manual
-   file drops, archive extraction, `git` invoked outside the hook path.
-
-### Install / uninstall (run on each workstation)
-```bash
-./install.sh              # per-user install (recommended; no root needed)
-tail -f ~/.guard/watcher.log
-./install.sh --uninstall  # remove service + global hook wiring
-```
-`GUARD_HOME` defaults to `~/.guard`. Windows uses `service/windows/install-service.ps1`.
-
-## Usage
-
-```bash
-# Is it safe to open this repo in VS Code? (run at clone time / pre-open hook)
-python3 scanner.py guard-open /path/to/repo        # exit 1 = DO NOT OPEN
-
-# Scan a working tree (fast, no git needed)
-python3 scanner.py scan-tree /path/to/repo
-
-# Scan the tree AND every added line across all commits/branches
-python3 scanner.py scan-git /path/to/repo
-
-# Machine-readable
-python3 scanner.py scan-tree /path/to/repo --json
-```
-
-Exit codes: `0` clean, `1` infected (a `critical` finding), `2` usage/error.
-Each module (`magic_bytes.py`, `vscode_guard.py`, `fingerprint_matcher.py`) also
-runs standalone on individual files.
-
-## Detection coverage (verified against `testdata/`)
-
-| # | Technique | Engine | Signature IDs |
-|---|-----------|--------|---------------|
-| 1 | `.env` base64 C2 URL in `AUTH_API_KEY` | fingerprint | `env.auth.b64` |
-| 2 | attack-added GitHub workflows | fingerprint | `wf.name`, `wf.added` |
-| 3 | `eval(proxyInfo)` IIFE | fingerprint | `iife.combo`, `iife.full.regex`, `iife.marker.*` |
-| 4 | obfuscated C2 payload | fingerprint | `payload.fp.1..7` |
-| 5 | VS Code folderOpen auto-run dropper | vscode_guard | `vscode.autorun.*`, `vscode.task.*` |
-| 6 | binary-disguised JS dropper (fake `.woff2`) | magic_bytes | magic-byte + text-body check |
-| 2b | modified/added workflow vs. approved baseline | workflow_baseline | `record` once on a clean repo, then `diff` |
-
-Verified behaviors:
-- HEAD clean but payload in history → `scan-tree` clean, `scan-git` catches it.
-- Real `.woff2` (correct `wOF2` magic) → no false positive.
-- Clean source/config/settings → exit 0.
-- JSONC (`.vscode` files with comments / trailing commas) is normalized before
-  parsing, and unparseable configs **fail closed** (raw substring fallback).
-
-## Design notes / how this differs from the old Python remediator
-
-- **Detect + quarantine-flag only.** No history rewrite, no force-push, no
-  full-`repo`-scope PAT on the endpoint. Those are the highest-blast-radius parts
-  of the old script and are deliberately out of scope here.
-- **Endpoint-first.** The `guard-open` mode is meant to run *before* VS Code opens
-  a folder, which is where the compromise actually happens.
-- **Signatures are data, not code.** Update `signatures.json`; the engines reload
-  it. New IOCs/fingerprints require no code change.
-
-## Next steps (not yet built)
-
-1. **Lower-latency watching:** swap the stdlib polling loop for FSEvents (macOS) /
-   inotify (Linux) / ReadDirectoryChangesW (Windows) or the `watchdog` package.
-   Event handling is unchanged; only the source of events differs.
-2. **Quarantine action:** implement `quarantine_cmd` as a reversible, logged move
-   of suspect files to `<GUARD_HOME>/quarantine/` + a fleet alert.
-3. **Central reporting:** ship `alerts.jsonl` to a SIEM / the analysis backend so
-   the security team sees fleet-wide detections, not just per-device logs.
-4. **Fold engines into the Guard binary** and its scheduled full-disk sweep, so
-   the deployed artifact is a single signed binary (see the earlier installer plan).
-5. **Signed signature updates** so a compromised host can't feed the fleet bad rules.
-6. **Baseline provisioning:** record approved workflow baselines centrally (from a
-   trusted CI checkout) and distribute them, rather than recording on each device.
-
-## Boundaries (by design)
-- Detect + report + optional reversible quarantine. **No** history rewrite, **no**
-  force-push, **no** broad-scope GitHub token on the endpoint.
-- The watcher stays within configured watch roots and caps any single scan at
-  50k files, so it can't wander into the whole filesystem.
-- Everything is transparent and uninstallable (`install.sh --uninstall`) — this is
-  a mandatory but visible internal tool, not a hidden agent.
+[MIT](LICENSE) © 2026 Syed Bipul Rahman
