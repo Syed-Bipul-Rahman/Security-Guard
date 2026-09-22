@@ -35,7 +35,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION = "1.0.18"
+VERSION = "1.0.19"
 
 # Telemetry destination — baked at release time from CI vars (empty in source).
 TELEMETRY_URL = os.environ.get("GUARD_TELEMETRY_URL", "")
