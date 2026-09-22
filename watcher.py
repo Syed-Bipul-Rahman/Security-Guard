@@ -51,6 +51,27 @@ def guard_home() -> Path:
     return Path(os.environ.get("GUARD_HOME", str(Path.home() / ".guard")))
 
 
+def _windows_user_profiles() -> list[str]:
+    """Every REAL user profile under C:\\Users, skipping system/built-in ones.
+    The GuardWatcher task runs as SYSTEM, whose ~ is the systemprofile dir — so
+    a '~/Desktop' default would watch the wrong (empty) folder. SYSTEM can read
+    all of these with no prompts, so we point the watch roots at them directly."""
+    base = Path((os.environ.get("SystemDrive", "C:") or "C:") + "\\Users")
+    skip = {"default", "default user", "public", "all users", "defaultapppool",
+            "wdagutilityaccount", "systemprofile", "localservice", "networkservice"}
+    profs: list[str] = []
+    try:
+        for d in base.iterdir():
+            try:
+                if d.is_dir() and d.name.lower() not in skip:
+                    profs.append(str(d))
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return profs
+
+
 DEFAULT_CONFIG = {
     "watch_roots": ["~/Projects", "~/Desktop", "~/Downloads", "~/Documents"],
     "poll_interval_sec": 5,
@@ -69,6 +90,7 @@ DEFAULT_CONFIG = {
     "mem_budget_fraction": 0.10,
     "hard_memory_ceiling": False,
     "update_check_sec": 21600,  # OTA auto-update cadence (6h)
+    "notify": True,             # pop a visual desktop alert on a critical detection
     "quarantine_cmd": None,
 }
 
@@ -89,7 +111,7 @@ class Watcher:
         self.home = home or guard_home()
         self.home.mkdir(parents=True, exist_ok=True)
         self.cfg = {**DEFAULT_CONFIG, **(config or {})}
-        self.roots = [Path(os.path.expanduser(r)).resolve() for r in self.cfg["watch_roots"]]
+        self.roots = self._expand_roots(self.cfg["watch_roots"])
         self.exclude = set(self.cfg["exclude_dir_names"])
         self.scan_exts = set(self.cfg["scan_new_files_ext"])
         self.git_trigger = set(self.cfg["git_trigger_files"])
@@ -108,6 +130,8 @@ class Watcher:
         self.repo_debounce_sec = float(self.cfg.get("repo_debounce_sec", 30))
         self._repo_scan_times: dict[str, float] = {}
         self._telemetry_dirty = False  # set on a new detection -> prompt a telemetry send
+        self._perm_blocked: set[str] = set()  # paths os.walk couldn't read (TCC etc.)
+        self._notify_times: dict[str, float] = {}  # per-path throttle for desktop alerts
 
         # Memory-friendliness controls
         self.batch_size = int(self.cfg.get("batch_size", 2000))
@@ -144,6 +168,7 @@ class Watcher:
             pass
         self.log(f"ALERT [{kind}] {path} — {len(rec['findings'])} finding(s)")
         self._telemetry_dirty = True  # a new detection -> report on next loop tick
+        self._maybe_notify(path, rec["findings"])
         qcmd = self.cfg.get("quarantine_cmd")
         if qcmd:
             try:
@@ -151,13 +176,76 @@ class Watcher:
             except Exception as exc:
                 self.log(f"quarantine hook failed: {exc}")
 
+    def _maybe_notify(self, path: str, findings) -> None:
+        """Pop a visual desktop alert (like an antivirus) on a critical detection.
+        Throttled per path so one infected repo doesn't stack multiple popups."""
+        if not self.cfg.get("notify", True):
+            return
+        now = time.time()
+        if now - self._notify_times.get(path, 0.0) < 60:
+            return
+        self._notify_times[path] = now
+        try:
+            from notifier import notify
+            name = os.path.basename(path.rstrip("/\\")) or path
+            n = len(findings) if isinstance(findings, list) else 1
+            notify("Guard - Threat detected",
+                   f"Malicious code found in '{name}'. {n} critical finding(s). "
+                   f"Do NOT open this folder.\n{path}")
+        except Exception as exc:
+            self.log(f"notify failed: {exc}")
+
+    # --------------------------------------------------------------- roots
+    def _expand_roots(self, raw: list[str]) -> list[Path]:
+        """Resolve configured watch roots. On Windows the service runs as SYSTEM,
+        so a '~'-based root (e.g. '~/Desktop') must NOT expand to SYSTEM's profile —
+        expand it to that same subpath under EVERY real user profile instead, so the
+        employee's C:\\Users\\<name>\\Desktop is actually watched. Absolute roots and
+        all non-Windows platforms keep normal expanduser behavior."""
+        out: list[Path] = []
+        is_win = sys.platform.startswith("win")
+        for r in raw:
+            if is_win and (r == "~" or r.startswith("~/") or r.startswith("~\\")):
+                rest = r[1:].lstrip("/\\")
+                for prof in _windows_user_profiles():
+                    out.append((Path(prof) / rest if rest else Path(prof)))
+            else:
+                out.append(Path(os.path.expanduser(r)))
+        # resolve + dedup, preserving order
+        seen: set[str] = set()
+        uniq: list[Path] = []
+        for p in out:
+            try:
+                rp = p.resolve()
+            except OSError:
+                rp = p
+            s = str(rp)
+            if s not in seen:
+                seen.add(s)
+                uniq.append(rp)
+        return uniq
+
     # --------------------------------------------------------------- walk
+    def _walk_onerror(self, err: OSError) -> None:
+        """os.walk swallows errors by default. Surface permission blocks (macOS TCC:
+        Desktop/Documents/Downloads/removable volumes) so Guard is never silently
+        blind to a watched tree. Dedup + cap so a gated tree can't flood the log."""
+        fn = getattr(err, "filename", "") or ""
+        if isinstance(err, PermissionError):
+            if fn not in self._perm_blocked:
+                self._perm_blocked.add(fn)
+                if len(self._perm_blocked) <= 50:
+                    self.log(f"WARNING: permission denied reading {fn} — grant access "
+                             f"(macOS: run 'guard permissions request' in your login "
+                             f"session, or enable Full Disk Access for guard)")
+                    self._telemetry_dirty = True
+
     def _iter_paths(self, root: Path):
         """Yield (path, is_dir, mtime) up to max_depth, honoring excludes."""
         if not root.exists():
             return
         root_depth = len(root.parts)
-        for dirpath, dirnames, filenames in os.walk(root):
+        for dirpath, dirnames, filenames in os.walk(root, onerror=self._walk_onerror):
             d = Path(dirpath)
             depth = len(d.parts) - root_depth
             if depth >= self.max_depth:
@@ -356,6 +444,7 @@ class Watcher:
         signal.signal(signal.SIGINT, self._stop)
         self.log(f"watcher started; roots={[str(r) for r in self.roots]} interval={self.interval}s")
         self.log(f"memguard: {self._memguard.summary()}")
+        self._check_permissions()
         # Prime state silently on first run so we don't alert on the entire existing
         # tree. Uses the same batched, disk-backed path so priming is also low-memory.
         if self._store.is_empty():
@@ -404,6 +493,36 @@ class Watcher:
                 time.sleep(0.1)
         self._store.close()
         self.log("watcher stopped")
+
+    def _check_permissions(self) -> None:
+        """At startup, verify Guard can actually READ its watch roots. On macOS,
+        TCC blocks Desktop/Documents/Downloads/removable volumes for a process that
+        hasn't been allowed; a silently-unreadable root makes Guard blind. If we're
+        running in the user's GUI session (LaunchAgent), raise the native "Allow"
+        prompts so the employee just clicks Allow; otherwise log a clear warning."""
+        blocked = []
+        for r in self.roots:
+            if not r.exists():
+                continue
+            try:
+                with os.scandir(r) as it:
+                    for _ in it:
+                        break
+            except PermissionError:
+                blocked.append(str(r))
+            except OSError:
+                pass
+        if not blocked:
+            return
+        self.log(f"WARNING: cannot read {len(blocked)} watch root(s): {blocked}")
+        self._telemetry_dirty = True
+        if sys.platform == "darwin":
+            try:
+                from permissions import request as perm_request
+                self.log("requesting access (an Allow prompt should appear)…")
+                perm_request(log=self.log)
+            except Exception as exc:
+                self.log(f"permission request failed: {exc}")
 
     def _stop(self, *_a) -> None:
         self._running = False

@@ -24,6 +24,8 @@ datas = [
     (str(ROOT / "snapshot_store.py"), "."),
     (str(ROOT / "memguard.py"), "."),
     (str(ROOT / "dep_blocklist.py"), "."),
+    (str(ROOT / "permissions.py"), "."),
+    (str(ROOT / "notifier.py"), "."),
     # signatures + config
     (str(ROOT / "signatures.json"), "."),
     (str(ROOT / "signatures.yaml"), "."),

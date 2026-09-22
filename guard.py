@@ -11,6 +11,8 @@ Commands:
   guard open <path>        pre-open check: safe to open this folder in VS Code?
   guard watch              start the always-on filesystem watcher (the service runs this)
   guard triage             host IR triage (reboots/persistence/recon/flood) - OS-native
+  guard permissions        check disk access; on macOS raise the "Allow" prompts (internal + removable)
+  guard notify-test        show a sample threat popup (verify desktop alerts work)
   guard deps update        refresh the malware-package blocklist from GitHub advisories
   guard deps check <path>  check a project's dependencies against the malware blocklist
   guard install            install Guard as an auto-start service on this machine
@@ -31,7 +33,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION = "1.0.9"
+VERSION = "1.0.14"
 
 # Telemetry destination — baked at release time from CI vars (empty in source).
 TELEMETRY_URL = os.environ.get("GUARD_TELEMETRY_URL", "")
@@ -206,38 +208,70 @@ def _self_exe() -> str:
 
 
 LAUNCHD_LABEL = "me.syedbipul.guard"
-LAUNCHD_PLIST = f"/Library/LaunchDaemons/{LAUNCHD_LABEL}.plist"
+LAUNCHD_PLIST = f"/Library/LaunchDaemons/{LAUNCHD_LABEL}.plist"     # legacy root daemon
+LAUNCHAGENT_PLIST = f"/Library/LaunchAgents/{LAUNCHD_LABEL}.plist"  # per-user, GUI session
 SYSTEMD_UNIT = "/etc/systemd/system/guard.service"
 
 
+def _target_user_uid() -> tuple[str, int]:
+    """The human user Guard should run as (the one who ran sudo), and their uid."""
+    import getpass
+    user = os.environ.get("SUDO_USER") or _safe_user(getpass.getuser) or "root"
+    try:
+        import pwd
+        return user, pwd.getpwnam(user).pw_uid
+    except Exception:
+        return user, os.getuid()
+
+
 def _install_macos(uninstall: bool) -> int:
+    # Guard runs as a per-user LaunchAgent (Aqua/GUI session), NOT a root daemon.
+    # This is required so macOS shows the "Allow" prompts for Desktop/Documents/
+    # Downloads/removable volumes (TCC never prompts a system-context daemon) and so
+    # the per-user access grant applies to the process that actually scans.
+    user, uid = _target_user_uid()
     if uninstall:
-        subprocess.call(["launchctl", "bootout", "system", LAUNCHD_PLIST])
-        try: os.remove(LAUNCHD_PLIST)
-        except OSError: pass
-        print("guard: launchd daemon removed"); return 0
-    home = os.environ.get("GUARD_HOME", "/var/lib/guard")
-    Path(home).mkdir(parents=True, exist_ok=True)
+        subprocess.call(["launchctl", "bootout", f"gui/{uid}", LAUNCHAGENT_PLIST])
+        subprocess.call(["launchctl", "bootout", "system", LAUNCHD_PLIST])  # legacy
+        for p in (LAUNCHAGENT_PLIST, LAUNCHD_PLIST):
+            try: os.remove(p)
+            except OSError: pass
+        print("guard: launch agent removed"); return 0
+
     exe = _self_exe()
+    # No GUARD_HOME -> the agent (running as the user) uses ~/.guard, which it owns
+    # and can write, and its default watch roots (~/Desktop, ~/Downloads, ...) expand
+    # to the employee's home. StandardOut/Err omitted (watcher writes ~/.guard/watcher.log).
     plist = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>{LAUNCHD_LABEL}</string>
   <key>ProgramArguments</key><array>{"".join(f"<string>{a}</string>" for a in exe.split())}<string>watch</string></array>
-  <key>EnvironmentVariables</key><dict><key>GUARD_HOME</key><string>{home}</string></dict>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>{home}/watcher.out.log</string>
-  <key>StandardErrorPath</key><string>{home}/watcher.err.log</string>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
 </dict></plist>'''
     try:
-        Path(LAUNCHD_PLIST).write_text(plist)
+        Path(LAUNCHAGENT_PLIST).write_text(plist)
     except PermissionError:
         print("guard install needs root (run with sudo)", file=sys.stderr); return 1
-    subprocess.call(["launchctl", "bootout", "system", LAUNCHD_PLIST])  # ignore if not loaded
-    rc = subprocess.call(["launchctl", "bootstrap", "system", LAUNCHD_PLIST])
-    print(f"guard: launchd daemon installed ({LAUNCHD_PLIST}); runs '{exe} watch' at boot")
-    return 0 if rc == 0 else rc
+
+    # Remove any legacy root daemon so we don't run two watchers.
+    subprocess.call(["launchctl", "bootout", "system", LAUNCHD_PLIST])
+    try:
+        if os.path.exists(LAUNCHD_PLIST):
+            os.remove(LAUNCHD_PLIST)
+    except OSError:
+        pass
+
+    subprocess.call(["launchctl", "bootout", f"gui/{uid}", LAUNCHAGENT_PLIST])  # if reloading
+    rc = subprocess.call(["launchctl", "bootstrap", f"gui/{uid}", LAUNCHAGENT_PLIST])
+    print(f"guard: launch agent installed ({LAUNCHAGENT_PLIST}); runs '{exe} watch' as {user} at login.")
+    print("guard: on first run an 'Allow' prompt appears for Desktop/Documents/Downloads and removable disks — click Allow.")
+    print("guard: for full internal+removable coverage in one grant, enable Full Disk Access for 'guard' (guard permissions open-settings).")
+    if rc != 0:
+        print("guard: (agent will also start at next login if bootstrap was deferred)")
+    return 0
 
 
 def _install_linux(uninstall: bool) -> int:
@@ -277,7 +311,11 @@ WantedBy=multi-user.target
 
 def cmd_install(uninstall: bool) -> int:
     plat = sys.platform
-    if not uninstall:
+    if not uninstall and plat != "darwin":
+        # Linux/Windows: the service runs as root/SYSTEM out of /var/lib/guard, so
+        # seed its state there now. macOS runs as a per-user LaunchAgent out of the
+        # employee's own ~/.guard (which it owns) and seeds itself on first run — we
+        # deliberately DON'T write root-owned files into the user's home here.
         _write_install_stamp()
         _write_watch_config()
         _write_telemetry_config()
@@ -340,6 +378,19 @@ def main(argv: list[str] | None = None) -> int:
         return _run_module("watcher.py", rest)
     if cmd == "triage":
         return cmd_triage(rest)
+    if cmd in ("permissions", "perms"):
+        return _run_module("permissions.py", rest)
+    if cmd == "notify-test":
+        try:
+            from notifier import notify
+            ok = notify("Guard - Threat detected (TEST)",
+                        "This is a TEST alert. If you can see this, Guard's threat "
+                        "notifications work on this machine.")
+            print("notified" if ok else "notify returned False (no mechanism available)")
+            return 0 if ok else 1
+        except Exception as e:
+            print(f"notify failed: {e}", file=sys.stderr)
+            return 1
     if cmd == "deps":
         return cmd_deps(rest)
     if cmd == "telemetry":
