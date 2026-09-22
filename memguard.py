@@ -21,12 +21,56 @@ from __future__ import annotations
 
 import gc
 import os
-import resource
 import sys
 import time
 
+try:
+    import resource  # Unix-only; absent on Windows (that's fine — see below)
+except ImportError:
+    resource = None  # type: ignore
+
+
+def _win_total_ram() -> int:
+    import ctypes
+
+    class MEMORYSTATUSEX(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+    stat = MEMORYSTATUSEX()
+    stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+    return int(stat.ullTotalPhys)
+
+
+def _win_rss() -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    counters = PROCESS_MEMORY_COUNTERS()
+    counters.cb = ctypes.sizeof(counters)
+    h = ctypes.windll.kernel32.GetCurrentProcess()
+    if ctypes.windll.psapi.GetProcessMemoryInfo(h, ctypes.byref(counters), counters.cb):
+        return int(counters.WorkingSetSize)
+    return 0
+
 
 def total_ram_bytes() -> int:
+    if sys.platform.startswith("win"):
+        try:
+            return _win_total_ram()
+        except Exception:
+            return 4 * 1024**3
     try:
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     except (ValueError, OSError, AttributeError):
@@ -36,6 +80,8 @@ def total_ram_bytes() -> int:
 
 def _ru_maxrss_bytes() -> int:
     """ru_maxrss is kilobytes on Linux, bytes on macOS/BSD. Autodetect."""
+    if resource is None:
+        return 0
     ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     if sys.platform == "darwin":
         return int(ru)          # already bytes
@@ -43,6 +89,12 @@ def _ru_maxrss_bytes() -> int:
 
 
 def current_rss_bytes() -> int:
+    # Windows: current working set via psapi (no resource module there).
+    if sys.platform.startswith("win"):
+        try:
+            return _win_rss()
+        except Exception:
+            return 0
     # Linux: read current (not peak) RSS from /proc.
     if sys.platform.startswith("linux"):
         try:
@@ -90,7 +142,10 @@ class MemoryGuard:
         return False
 
     def install_hard_ceiling(self, multiple: float = 1.5) -> bool:
-        """Optional backstop: cap address space at multiple*budget. Opt-in."""
+        """Optional backstop: cap address space at multiple*budget. Opt-in.
+        No-op on Windows (no resource module / RLIMIT_AS)."""
+        if resource is None:
+            return False
         try:
             cap = int(self.budget * multiple)
             soft, hard = resource.getrlimit(resource.RLIMIT_AS)
