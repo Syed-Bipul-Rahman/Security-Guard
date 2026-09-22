@@ -23,6 +23,18 @@ $asset = "guard-windows-$arch.exe"
 Write-Host "Guard installer: windows-$arch"
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+# Trust Guard in Microsoft Defender BEFORE downloading, so the agent (an unsigned,
+# self-updating file scanner — exactly what heuristics flag) isn't quarantined or
+# blocked. Best-effort: skip quietly if Defender is off or centrally managed.
+try {
+  Add-MpPreference -ExclusionPath $InstallDir -ErrorAction Stop
+  Add-MpPreference -ExclusionProcess 'guard.exe' -ErrorAction SilentlyContinue
+  Write-Host "Defender: trusted $InstallDir (exclusion added)"
+} catch {
+  Write-Host "Defender: could not add exclusion (off or managed policy) - continuing"
+}
+
 $tmp = Join-Path $env:TEMP $asset
 Write-Host "Downloading $asset ..."
 Invoke-WebRequest -Uri "$Releases/$asset" -OutFile $tmp -UseBasicParsing
@@ -69,7 +81,39 @@ Register-ScheduledTask -TaskName 'GuardWatcher' -Action $action -Trigger @($trig
   -Settings $settings -Principal $principal -Force -Description 'Guard supply-chain watcher (auto-start, keep-alive)' | Out-Null
 Start-ScheduledTask -TaskName 'GuardWatcher'
 
+# --- auto-configure Sysmon (Microsoft-signed kernel telemetry) ---
+# Installs Sysmon (or updates its config if already present) using the config
+# bundled inside the Guard binary. Best-effort: Guard works fine without it.
+function Install-Sysmon {
+  param([string]$Bin, [string]$Arch)
+  try {
+    $work = Join-Path $env:TEMP 'guard-sysmon'
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    $cfg = Join-Path $work 'sysmon-config.xml'
+    & $Bin sysmon-config $cfg | Out-Null           # config comes from the binary
+    if (-not (Test-Path $cfg)) { throw 'could not export sysmon config' }
+
+    $exeName   = if ($Arch -eq 'arm64') { 'Sysmon64a.exe' } else { 'Sysmon64.exe' }
+    $sysmonExe = Join-Path $work $exeName
+    if (-not (Test-Path $sysmonExe)) {
+      $zip = Join-Path $work 'Sysmon.zip'
+      Invoke-WebRequest 'https://download.sysinternals.com/files/Sysmon.zip' -OutFile $zip -UseBasicParsing
+      Expand-Archive $zip -DestinationPath $work -Force
+    }
+    $svc = Get-Service -Name 'Sysmon64','Sysmon' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($svc) {
+      & $sysmonExe -accepteula -c $cfg | Out-Null
+      Write-Host "Sysmon: updated to Guard config (already installed)"
+    } else {
+      & $sysmonExe -accepteula -i $cfg | Out-Null
+      Write-Host "Sysmon: installed with Guard config (kernel telemetry active)"
+    }
+  } catch {
+    Write-Host "Sysmon: auto-configure skipped ($($_.Exception.Message)) - Guard still works without it"
+  }
+}
+Install-Sysmon -Bin $Bin -Arch $arch
+
 Write-Host ""
-Write-Host "Done. Guard is installed and the GuardWatcher task is running."
+Write-Host "Done. Guard is installed, trusted in Defender, and the GuardWatcher task is running."
 Write-Host "Open a NEW terminal, then try:  guard version   |   guard scan .   |   guard triage"
-Write-Host "Tip: also install Sysmon for kernel telemetry (see windows/sysmon-config.xml)."

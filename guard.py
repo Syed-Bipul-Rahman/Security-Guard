@@ -33,7 +33,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION = "1.0.16"
+VERSION = "1.0.17"
 
 # Telemetry destination — baked at release time from CI vars (empty in source).
 TELEMETRY_URL = os.environ.get("GUARD_TELEMETRY_URL", "")
@@ -380,6 +380,25 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_triage(rest)
     if cmd in ("permissions", "perms"):
         return _run_module("permissions.py", rest)
+    if cmd == "sysmon-config":
+        # Emit the bundled Sysmon config (used by the Windows installer to configure
+        # Sysmon from the binary itself — no separate download of the config).
+        src = resource_path("windows/sysmon-config.xml")
+        try:
+            data = src.read_bytes()
+        except OSError:
+            print("sysmon config not bundled", file=sys.stderr)
+            return 1
+        if rest:
+            try:
+                Path(rest[0]).write_bytes(data)
+                print(f"wrote {rest[0]}")
+            except OSError as e:
+                print(f"could not write {rest[0]}: {e}", file=sys.stderr)
+                return 1
+        else:
+            sys.stdout.buffer.write(data)
+        return 0
     if cmd == "notify-test":
         try:
             from notifier import notify
