@@ -129,6 +129,7 @@ class Watcher:
 
         self.repo_debounce_sec = float(self.cfg.get("repo_debounce_sec", 30))
         self._repo_scan_times: dict[str, float] = {}
+        self._repo_dirty: dict[str, str] = {}  # repos that changed while debounced -> settle & rescan
         self._telemetry_dirty = False  # set on a new detection -> prompt a telemetry send
         self._perm_blocked: set[str] = set()  # paths os.walk couldn't read (TCC etc.)
         self._notify_times: dict[str, float] = {}  # per-path throttle for desktop alerts
@@ -235,10 +236,15 @@ class Watcher:
             if fn not in self._perm_blocked:
                 self._perm_blocked.add(fn)
                 if len(self._perm_blocked) <= 50:
-                    self.log(f"WARNING: permission denied reading {fn} — grant access "
-                             f"(macOS: run 'guard permissions request' in your login "
-                             f"session, or enable Full Disk Access for guard)")
-                    self._telemetry_dirty = True
+                    if sys.platform == "darwin":
+                        hint = ("grant access: run 'guard permissions request' in your "
+                                "login session, or enable Full Disk Access for guard")
+                        self._telemetry_dirty = True  # a blocked root on macOS = real blindness
+                    else:
+                        # On Windows these are usually legacy reparse junctions
+                        # (My Music/My Pictures/My Videos) that deny listing by design.
+                        hint = "skipped (access denied)"
+                    self.log(f"WARNING: cannot read {fn} — {hint}")
 
     def _iter_paths(self, root: Path):
         """Yield (path, is_dir, mtime) up to max_depth, honoring excludes."""
@@ -422,9 +428,28 @@ class Watcher:
         handled = 0
         for repo, reason in repos_to_scan.items():
             if self._debounced(repo):
+                # Changes are still arriving for a repo we just scanned (e.g. a git
+                # checkout still landing files after a clone was scanned early).
+                # Remember it and rescan once the debounce window closes.
+                self._repo_dirty[repo] = reason
                 continue
             self._repo_scan_times[repo] = time.time()
             self.log(f"scan trigger: {repo} ({reason})")
+            try:
+                self._scan_repo(repo, reason)
+            except Exception as exc:
+                self.log(f"repo scan error {repo}: {exc}")
+            handled += 1
+            self._memguard.check_and_throttle()
+        # Settled rescan: a repo that kept changing while debounced gets ONE more
+        # scan once it stabilizes, so a clone scanned mid-checkout (empty working
+        # tree) isn't permanently missed after the files finish landing.
+        for repo in list(self._repo_dirty):
+            if repo in repos_to_scan or self._debounced(repo):
+                continue  # handled this pass, or still within the debounce window
+            reason = self._repo_dirty.pop(repo)
+            self._repo_scan_times[repo] = time.time()
+            self.log(f"scan trigger (settled): {repo} ({reason})")
             try:
                 self._scan_repo(repo, reason)
             except Exception as exc:
