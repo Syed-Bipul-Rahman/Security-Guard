@@ -42,6 +42,12 @@ $have = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash.ToLower()
 if ($want.ToLower() -ne $have) { Remove-Item $tmp -Force; Write-Error "CHECKSUM MISMATCH (want $want, got $have) - aborting."; return }
 Write-Host "checksum OK"
 
+# stop any running instance so guard.exe isn't locked (a reinstall over a running
+# service would otherwise fail to overwrite the binary)
+Stop-ScheduledTask -TaskName 'GuardWatcher' -ErrorAction SilentlyContinue | Out-Null
+Get-Process -Name guard -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+if (Test-Path $Bin) { Remove-Item $Bin -Force -ErrorAction SilentlyContinue }
 Move-Item -Force $tmp $Bin
 Write-Host "installed: $Bin"
 
