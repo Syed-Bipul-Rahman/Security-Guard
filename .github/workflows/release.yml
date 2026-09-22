@@ -32,6 +32,11 @@ jobs:
           - { os: windows-latest,   plat: windows-x64 }   # Windows x86_64
           - { os: windows-11-arm,   plat: windows-arm64 } # Windows on ARM
     runs-on: ${{ matrix.os }}
+    env:
+      # Dormant Windows code signing: turns on automatically once the SignPath
+      # Foundation secrets exist (see docs/WINDOWS-CODE-SIGNING.md). Until then,
+      # builds publish unsigned + SHA-256, exactly as before.
+      SIGNPATH_ENABLED: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -91,17 +96,50 @@ jobs:
           python -m pip install --quiet --upgrade pip pyinstaller certifi
           pyinstaller build/guard.spec --distpath build/dist --workpath build/work --clean --noconfirm
 
-      - name: Name + checksum artifact
+      - name: Name artifact
+        id: name
         shell: bash
         run: |
           mkdir -p out
-          if [ "${{ matrix.plat }}" = "windows-x64" ]; then
-            cp build/dist/guard.exe "out/guard-${{ matrix.plat }}.exe"
-            f="out/guard-${{ matrix.plat }}.exe"
-          else
-            cp build/dist/guard "out/guard-${{ matrix.plat }}"
-            f="out/guard-${{ matrix.plat }}"
-          fi
+          case "${{ matrix.plat }}" in
+            windows-*) cp build/dist/guard.exe "out/guard-${{ matrix.plat }}.exe"; f="out/guard-${{ matrix.plat }}.exe" ;;
+            *)         cp build/dist/guard     "out/guard-${{ matrix.plat }}";     f="out/guard-${{ matrix.plat }}" ;;
+          esac
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+
+      # ---- Windows Authenticode signing via SignPath Foundation ----
+      # Dormant until the SIGNPATH_* secrets exist. The signed binary REPLACES the
+      # unsigned one BEFORE the checksum below, so both the .sha256 sidecar and the
+      # OTA manifest (built from these artifacts) cover the signed bytes.
+      - name: Upload unsigned binary (for signing)
+        id: unsigned
+        if: startsWith(matrix.plat, 'windows') && env.SIGNPATH_ENABLED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-${{ matrix.plat }}
+          path: ${{ steps.name.outputs.file }}
+
+      - name: Sign with SignPath Foundation
+        if: startsWith(matrix.plat, 'windows') && env.SIGNPATH_ENABLED == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORG_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Swap in signed binary
+        if: startsWith(matrix.plat, 'windows') && env.SIGNPATH_ENABLED == 'true'
+        shell: bash
+        run: cp "signed/$(basename '${{ steps.name.outputs.file }}')" "${{ steps.name.outputs.file }}"
+
+      - name: Checksum artifact
+        shell: bash
+        run: |
+          f="${{ steps.name.outputs.file }}"
           ( command -v sha256sum >/dev/null && sha256sum "$f" || shasum -a 256 "$f" ) | awk '{print $1}' > "$f.sha256"
 
       - uses: actions/upload-artifact@v4
