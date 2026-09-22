@@ -27,9 +27,15 @@ $tmp = Join-Path $env:TEMP $asset
 Write-Host "Downloading $asset ..."
 Invoke-WebRequest -Uri "$Releases/$asset" -OutFile $tmp -UseBasicParsing
 
-# verify checksum (fail closed)
+# verify checksum (fail closed). Download the .sha256 to a file and read it as text:
+# GitHub serves release assets as octet-stream, so Invoke-WebRequest's .Content is a
+# byte[] and calling .Trim() on it throws. -OutFile avoids that.
+$want = $null
 try {
-  $want = (Invoke-WebRequest -Uri "$Releases/$asset.sha256" -UseBasicParsing).Content.Trim().Split()[0]
+  $shaFile = "$tmp.sha256"
+  Invoke-WebRequest -Uri "$Releases/$asset.sha256" -OutFile $shaFile -UseBasicParsing
+  $want = ((Get-Content $shaFile -Raw).Trim() -split '\s+')[0]
+  Remove-Item $shaFile -Force -ErrorAction SilentlyContinue
 } catch { $want = $null }
 if (-not $want) { Remove-Item $tmp -Force; Write-Error "No checksum published for $asset - refusing to install unverified binary."; return }
 $have = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash.ToLower()
