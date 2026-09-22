@@ -91,6 +91,7 @@ DEFAULT_CONFIG = {
     "hard_memory_ceiling": False,
     "update_check_sec": 21600,  # OTA auto-update cadence (6h)
     "notify": True,             # pop a visual desktop alert on a critical detection
+    "remediate": True,          # auto-remove injected malware (backs up first; `guard restore` undoes)
     "quarantine_cmd": None,
 }
 
@@ -133,6 +134,8 @@ class Watcher:
         self._telemetry_dirty = False  # set on a new detection -> prompt a telemetry send
         self._perm_blocked: set[str] = set()  # paths os.walk couldn't read (TCC etc.)
         self._notify_times: dict[str, float] = {}  # per-path throttle for desktop alerts
+        self.remediate = bool(self.cfg.get("remediate", True))
+        self._rem = None  # lazy Remediator
 
         # Memory-friendliness controls
         self.batch_size = int(self.cfg.get("batch_size", 2000))
@@ -169,13 +172,78 @@ class Watcher:
             pass
         self.log(f"ALERT [{kind}] {path} — {len(rec['findings'])} finding(s)")
         self._telemetry_dirty = True  # a new detection -> report on next loop tick
-        self._maybe_notify(path, rec["findings"])
+        # In remediate mode the caller pops a single "neutralized" alert after
+        # cleaning; otherwise pop the "detected" alert here.
+        if not self.remediate:
+            self._maybe_notify(path, rec["findings"])
         qcmd = self.cfg.get("quarantine_cmd")
         if qcmd:
             try:
                 subprocess.run(qcmd + [path], check=False, timeout=30)
             except Exception as exc:
                 self.log(f"quarantine hook failed: {exc}")
+
+    def _remediator(self):
+        if self._rem is None:
+            from remediator import Remediator
+            self._rem = Remediator(self.home, log=self.log)
+        return self._rem
+
+    _BINARY_MASK_EXTS = {".woff2", ".woff", ".ttf", ".otf", ".png", ".jpg",
+                         ".jpeg", ".ico", ".gif", ".webp"}
+
+    def _remediate_repo(self, repo: str) -> None:
+        """Auto-remove injected malware from a flagged repo, then pop ONE alert
+        describing what was neutralized. Originals are backed up (guard restore)."""
+        try:
+            summary = self._remediator().clean_repo(repo)
+        except Exception as exc:
+            self.log(f"remediate error {repo}: {exc}")
+            self._maybe_notify(repo, ["threat detected (auto-clean failed — review)"])
+            return
+        acted = summary["neutralized"] or summary["quarantined"] or summary["config_cleaned"]
+        if acted:
+            self.log(f"remediated {repo}: {len(summary['neutralized'])} neutralized, "
+                     f"{len(summary['quarantined'])} quarantined, "
+                     f"{len(summary['config_cleaned'])} config-cleaned")
+            self._notify_neutralized(repo, summary)
+        else:
+            self._maybe_notify(repo, ["threat detected — manual review required"])
+
+    def _remediate_file(self, path: str, findings) -> None:
+        try:
+            dropper = Path(path).suffix.lower() in self._BINARY_MASK_EXTS
+            res = self._remediator().remediate_file(path, is_dropper=dropper)
+        except Exception as exc:
+            self.log(f"remediate error {path}: {exc}")
+            self._maybe_notify(path, findings)
+            return
+        act = res.get("action")
+        if act in ("quarantine", "neutralize", "clean-settings", "clean-tasks"):
+            self._notify_neutralized(path, {
+                "neutralized": [path] if act == "neutralize" else [],
+                "quarantined": [path] if act == "quarantine" else [],
+                "config_cleaned": [path] if act in ("clean-settings", "clean-tasks") else []})
+        else:
+            self._maybe_notify(path, findings)
+
+    def _notify_neutralized(self, target: str, summary: dict) -> None:
+        if not self.cfg.get("notify", True):
+            return
+        now = time.time()
+        if now - self._notify_times.get(target, 0.0) < 60:
+            return
+        self._notify_times[target] = now
+        try:
+            from notifier import notify
+            name = os.path.basename(target.rstrip("/\\")) or target
+            n = (len(summary.get("neutralized", [])) + len(summary.get("quarantined", []))
+                 + len(summary.get("config_cleaned", [])))
+            notify("Guard - Threat neutralized",
+                   f"Removed injected malware from '{name}'. {n} file(s) cleaned/quarantined; "
+                   f"originals backed up (run 'guard restore' to undo).\n{target}")
+        except Exception as exc:
+            self.log(f"notify failed: {exc}")
 
     def _maybe_notify(self, path: str, findings) -> None:
         """Pop a visual desktop alert (like an antivirus) on a critical detection.
@@ -340,7 +408,10 @@ class Watcher:
         wf = [str(f) for f in self.wb.diff(repo) if f.severity == "critical"]
         if wf:
             self.alert("workflow-baseline", repo, wf)
-        if not (crit or tree_crit or wf):
+        if crit or tree_crit or wf:
+            if self.remediate:
+                self._remediate_repo(repo)
+        else:
             self.log(f"scan clean: {repo}")
 
     def _scan_file(self, path: str) -> None:
@@ -358,6 +429,8 @@ class Watcher:
                         if getattr(f, "severity", "") == "critical"]
         if findings:
             self.alert("new-file", path, findings)
+            if self.remediate:
+                self._remediate_file(path, findings)
 
     # --------------------------------------------------------------- loop
     def _handle_changes(self, changes, repos_to_scan, files_to_scan, is_dir_map):

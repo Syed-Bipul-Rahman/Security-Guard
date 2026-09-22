@@ -26,6 +26,7 @@ datas = [
     (str(ROOT / "dep_blocklist.py"), "."),
     (str(ROOT / "permissions.py"), "."),
     (str(ROOT / "notifier.py"), "."),
+    (str(ROOT / "remediator.py"), "."),
     # signatures + config
     (str(ROOT / "signatures.json"), "."),
     (str(ROOT / "signatures.yaml"), "."),

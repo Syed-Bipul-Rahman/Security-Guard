@@ -11,6 +11,8 @@ Commands:
   guard open <path>        pre-open check: safe to open this folder in VS Code?
   guard watch              start the always-on filesystem watcher (the service runs this)
   guard triage             host IR triage (reboots/persistence/recon/flood) - OS-native
+  guard clean <path>       REMOVE injected malware: excise bad code, keep the real file (backs up first)
+  guard restore <path>     undo a clean/quarantine from the backup store
   guard permissions        check disk access; on macOS raise the "Allow" prompts (internal + removable)
   guard notify-test        show a sample threat popup (verify desktop alerts work)
   guard deps update        refresh the malware-package blocklist from GitHub advisories
@@ -33,7 +35,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION = "1.0.17"
+VERSION = "1.0.18"
 
 # Telemetry destination — baked at release time from CI vars (empty in source).
 TELEMETRY_URL = os.environ.get("GUARD_TELEMETRY_URL", "")
@@ -378,6 +380,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_module("watcher.py", rest)
     if cmd == "triage":
         return cmd_triage(rest)
+    if cmd == "clean":
+        return _run_module("remediator.py", ["clean"] + (rest or ["."]))
+    if cmd == "restore":
+        return _run_module("remediator.py", ["restore"] + rest)
     if cmd in ("permissions", "perms"):
         return _run_module("permissions.py", rest)
     if cmd == "sysmon-config":
