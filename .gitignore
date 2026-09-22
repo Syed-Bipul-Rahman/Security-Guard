@@ -24,3 +24,6 @@ testdata/git-history-repo/
 guard-update.key
 manifest.json
 manifest.json.sig
+
+# local-only SignPath application worksheet (not published)
+docs/WINDOWS-CODE-SIGNING.md

@@ -184,6 +184,19 @@ Please keep the project's boundaries: it detects, removes injected payloads with
 reversible backup, and reports — it does **not** rewrite remote git history,
 force-push, or carry a broad-scope GitHub token on the endpoint.
 
+See also: [Code of Conduct](CODE_OF_CONDUCT.md) · [Contributing](CONTRIBUTING.md) ·
+[Privacy Policy](PRIVACY.md).
+
+---
+
+## Code signing
+
+Windows release binaries are Authenticode code-signed. Free code signing for this
+open-source project is provided by the **[SignPath Foundation](https://signpath.org)**,
+with a certificate issued by SignPath Foundation. (Signing is being enabled for the
+project; unsigned builds remain verifiable by the SHA-256 published with each
+release.)
+
 ---
 
 ## The attack, in one paragraph
