@@ -127,7 +127,7 @@ jobs:
           "$g" av rules --validate smoke/sigs/smoke.yar
           set +e; out=$("$g" av scan --signatures smoke/sigs smoke/hit.txt); rc=$?; set -e
           echo "$out"
-          [ "$rc" = 1 ] && echo "$out" | grep -q 'yara:smoke.smoke_test' || { echo "YARA smoke scan did not detect the test file"; exit 1; }
+          [ "$rc" = 1 ] && echo "$out" | grep -q 'yara: smoke_test' || { echo "YARA smoke scan did not detect the test file"; exit 1; }
 
       - name: Name artifact
         id: name
