@@ -329,7 +329,10 @@ def test_quarantine_flow(tmp_path, rust_guard, tree):
         args = ["av", "--vault", str(vault), "quarantine", "list"]
         r = run_rust(exe, *args) if exe else run_python(*args)
         assert r.returncode == 0
-        return json.loads(sub(text(r.stdout), work))
+        # scrub after parsing: in the JSON text Windows paths are escaped
+        items = json.loads(text(r.stdout))
+        return [json.loads(sub(json.dumps({k: sub(v, work) if isinstance(v, str) else v
+                                           for k, v in e.items()}), work)) for e in items]
 
     py_list, rs_list = listing(pv, pw), listing(rv, rw, rust_guard)
     key = lambda e: e["original_path"]  # noqa: E731
