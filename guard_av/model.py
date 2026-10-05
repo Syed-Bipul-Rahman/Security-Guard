@@ -31,7 +31,7 @@ class Verdict(IntEnum):
 class Detection:
     """One reason a file was flagged."""
 
-    engine: str                 # "hash" | "rule" | "heuristic" | "archive"
+    engine: str                 # "hash" | "rule" | "yara" | "heuristic" | "archive"
     name: str                   # threat / indicator name, e.g. "Webshell.PHP.SuperglobalExec"
     verdict: Verdict
     description: str = ""

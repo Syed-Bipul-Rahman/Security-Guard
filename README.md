@@ -187,7 +187,8 @@ Besides the incident-specific engines, Guard ships a general anti-malware engine
 | Content type ID | identifies PE / ELF / Mach-O / archives / scripts by **bytes**, not extension | — |
 | Allowlist | known-good SHA-256, trusted path globs, disabled rule ids | CLEAN (stops) |
 | Hash DB | exact MD5 / SHA-1 / SHA-256 signatures (JSON or `<hash> <name>` text lists) | MALICIOUS |
-| Rules | YARA-style rules: text (ascii/wide/nocase), hex with `??` / `[n-m]` jumps / `(a\|b)`, regex; boolean conditions (`all`/`any`/`at_least`/`at`/`count`/`filesize`) | MALICIOUS / SUSPICIOUS |
+| YARA | Real YARA rules (`*.yar` / `*.yara`, compiled by yara-x in the Rust core, with the `pe`, `elf`, `macho`, `dotnet`, `math`, `hash` modules and more). Drop a rule file into `~/.guard/av/` or a `--signatures` directory. A rule reports SUSPICIOUS unless its meta says `verdict = "malicious"`; `whole_file = true` marks it safe to quarantine; disable one with `yara:<file stem>.<rule>` in an allowlist | MALICIOUS / SUSPICIOUS |
+| Rules | JSON rules (the original format, kept for compatibility): text (ascii/wide/nocase), hex with `??` / `[n-m]` jumps / `(a\|b)`, regex; boolean conditions (`all`/`any`/`at_least`/`at`/`count`/`filesize`) | MALICIOUS / SUSPICIOUS |
 | Heuristics | PE packers, encrypted executable sections, W+X sections, entry point outside code, process-injection / hollowing / keylogger API sets, ELF LD-preload rootkits, script obfuscation (encoded-blob exec, `_0x` obfuscator, char-code exec), PowerShell encoded/hidden/AMSI tampering, double/RTLO/masquerading filenames | SUSPICIOUS, MALICIOUS only when ≥3 strong independent indicators agree |
 | Archives | recursive zip / tar / gzip / bzip2 / xz, in memory, bomb-safe (depth, member count, size and ratio limits) | per-member verdicts |
 
@@ -280,8 +281,8 @@ Contributions are welcome — especially new detection signatures.
 
 1. **Fork** and create a feature branch off `main`.
 2. **Signatures are data, not code.** General malware rules and hashes go in
-   `guard_av/data/rules.json` / `hashes.json` (validate with
-   `guard av rules --validate <file>`); incident IOCs go in `signatures.json`
+   `guard_av/data/rules.json` / `hashes.json`, or as YARA in a `*.yar` file
+   (validate either with `guard av rules --validate <file>`); incident IOCs go in `signatures.json`
    (fingerprints, dropper paths, `.vscode` rules). No code change needed. Add a
    matching fixture under `testdata/`, or a base64-encoded sample in
    `tests/samples.py` so live signatures never land in the repo.
@@ -296,7 +297,7 @@ Contributions are welcome — especially new detection signatures.
 
 Code layout: `guard.py` (entrypoint/CLI) · `scanner.py` (orchestrator) ·
 `guard_av/` (antivirus engine: `engine`, `rules`, `heuristics`, `archive`,
-`hashdb`, `allowlist`, `quarantine`, `filetype`, `cli`) ·
+`yara_rules`, `hashdb`, `allowlist`, `quarantine`, `filetype`, `cli`) ·
 `fingerprint_matcher.py` · `vscode_guard.py` · `magic_bytes.py` ·
 `workflow_baseline.py` · `dep_blocklist.py` (detection) · `watcher.py` (service) ·
 `remediator.py` (auto-clean) · `notifier.py` (alerts) · `updater.py` (OTA) ·

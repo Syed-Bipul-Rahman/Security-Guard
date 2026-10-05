@@ -5,11 +5,14 @@
 //! orchestration, I/O, archives and policy. `guard_av._native` loads this
 //! module when present and falls back to pure Python otherwise, so behaviour
 //! is identical either way (the test suite runs against both backends).
+//! YARA rules (`yara.rs`) are compiled and matched by yara-x; the JSON rule
+//! format stays as a compatibility layer alongside them.
 //! Matching releases the GIL, so scans can run on several threads.
 
 pub mod entropy;
 pub mod heuristics;
 pub mod rules;
+pub mod yara;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -73,6 +76,40 @@ impl PyRuleSet {
     }
 }
 
+/// Compiled YARA rules (yara-x). Built from `[(namespace, origin, source)]`;
+/// raises ValueError with yara-x's diagnostic when a source doesn't compile.
+#[pyclass(name = "YaraRules", frozen)]
+struct PyYaraRules {
+    inner: yara::YaraRules,
+}
+
+#[pymethods]
+impl PyYaraRules {
+    #[new]
+    fn new(py: Python<'_>, sources: Vec<(String, String, String)>) -> PyResult<Self> {
+        py.detach(|| yara::YaraRules::compile(&sources))
+            .map(|inner| PyYaraRules { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    #[getter]
+    fn warnings(&self) -> Vec<String> {
+        self.inner.warnings().to_vec()
+    }
+
+    /// -> [(namespace, rule, tags, meta_json, (pattern, offset) | None), ...];
+    /// raises TimeoutError when the scan runs longer than `timeout` seconds.
+    fn scan(&self, py: Python<'_>, data: &[u8], timeout: f64, max_matches: usize)
+            -> PyResult<Vec<yara::Hit>> {
+        py.detach(|| self.inner.scan(data, std::time::Duration::from_secs_f64(timeout), max_matches))
+            .map_err(pyo3::exceptions::PyTimeoutError::new_err)
+    }
+}
+
 #[pymodule]
 fn guard_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -82,5 +119,6 @@ fn guard_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(macho_indicators, m)?)?;
     m.add_function(wrap_pyfunction!(script_indicators, m)?)?;
     m.add_class::<PyRuleSet>()?;
+    m.add_class::<PyYaraRules>()?;
     Ok(())
 }
