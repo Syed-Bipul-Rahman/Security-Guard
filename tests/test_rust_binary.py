@@ -6,8 +6,8 @@ subprocess against it. Both must log the same lines, print the same result and
 leave the same files behind. That is what lets an installed Python build update
 itself to the Rust binary, and the Rust binary keep updating, through one channel.
 
-The binary comes from $GUARD_RS_BIN, else cli/target/{release,debug}/guard. The
-tests skip without one locally, and fail without one in CI.
+tests/test_rust_commands.py covers the other ported commands; rustbin.py finds
+the binary.
 """
 
 from __future__ import annotations
@@ -27,9 +27,8 @@ import pytest
 
 import ed25519_pure
 import updater
+from rustbin import EXE, ROOT, binary_version, run_rust, rust_guard  # noqa: F401
 
-ROOT = Path(__file__).resolve().parent.parent
-EXE = ".exe" if sys.platform.startswith("win") else ""
 VERSION = re.search(r'^VERSION = "([^"]+)"', (ROOT / "guard.py").read_text(), re.M).group(1)
 SEED = bytes(range(32))
 PUBKEY = ed25519_pure.publickey(SEED).hex()
@@ -38,36 +37,9 @@ OLD_BIN = b"OLD-GUARD-BINARY"
 NEW_BIN = b"NEW-GUARD-BINARY"
 
 
-@pytest.fixture(scope="session")
-def rust_guard() -> Path:
-    env = os.environ.get("GUARD_RS_BIN")
-    candidates = [Path(env)] if env else [ROOT / "cli" / "target" / t / f"guard{EXE}" for t in ("release", "debug")]
-    for c in candidates:
-        if c.is_file():
-            return c.resolve()
-    msg = f"Rust guard binary not built (looked at {', '.join(map(str, candidates))}); cargo build --manifest-path cli/Cargo.toml"
-    if os.environ.get("CI"):
-        pytest.fail(msg)
-    pytest.skip(msg)
-
-
-def run_rust(exe: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
-    full = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
-    full.update(env or {})
-    return subprocess.run([str(exe), *args], capture_output=True, env=full, timeout=120)
-
-
 # ---------------------------------------------------------------------------
 # CLI basics
 # ---------------------------------------------------------------------------
-@functools.lru_cache(maxsize=None)
-def binary_version(exe: Path) -> str:
-    """The version the binary runs as (release builds bake GUARD_VERSION in)."""
-    r = run_rust(exe, "version")
-    assert r.returncode == 0
-    return r.stdout.decode().strip().removeprefix("guard ")
-
-
 def test_version_matches_guard_py(rust_guard):
     assert binary_version(rust_guard) == os.environ.get("GUARD_VERSION", VERSION)
     if "GUARD_VERSION" not in os.environ:  # a release build rewrites guard.py's VERSION

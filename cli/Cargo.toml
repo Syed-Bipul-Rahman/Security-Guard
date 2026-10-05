@@ -15,6 +15,10 @@ path = "src/main.rs"
 [dependencies]
 base64 = "0.23.1"
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+flate2 = "1"
+gethostname = "1"
+mac_address = "1"
+regex = "1"
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 sha2 = "0.11.0"
 # rustls + bundled Mozilla roots: HTTPS works in a static binary with no system
@@ -25,3 +29,12 @@ ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] 
 lto = true
 codegen-units = 1
 strip = true
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Wdk_System_SystemServices", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+flate2 = "1"

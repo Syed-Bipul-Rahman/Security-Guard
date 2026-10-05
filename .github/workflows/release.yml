@@ -143,10 +143,15 @@ jobs:
           GUARD_VERSION: ${{ steps.v.outputs.version }}
           PUBKEY: ${{ secrets.GUARD_UPDATE_PUBKEY }}
           UPURL: ${{ secrets.GUARD_UPDATE_URL }}
+          TELURL: ${{ secrets.GUARD_TELEMETRY_URL }}
+          INGEST: ${{ secrets.GUARD_INGEST_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            # same release identity the Python build gets baked in above
+            # same release identity the Python build gets baked in above;
+            # telemetry only overrides the source default when the secret is set
             export GUARD_UPDATE_PUBKEY="$PUBKEY" GUARD_UPDATE_URL="$UPURL"
+            if [ -n "$TELURL" ]; then export GUARD_TELEMETRY_URL="$TELURL"; fi
+            if [ -n "$INGEST" ]; then export GUARD_INGEST_TOKEN="$INGEST"; fi
           fi
           case "${{ matrix.plat }}" in
             linux-x64)     t=x86_64-unknown-linux-musl ;;
@@ -167,9 +172,9 @@ jobs:
           exe=""; case "$t" in *windows*) exe=.exe ;; esac
           echo "bin=cli/target/$t/release/guard$exe" >> "$GITHUB_OUTPUT"
 
-      # Self-contained, and its signed self-update matches updater.py on this OS
-      # (including the rename swap on Windows).
-      - name: Test Rust guard (static + OTA parity)
+      # Self-contained, and each ported command matches the Python build on this
+      # OS (including the self-update rename swap on Windows).
+      - name: Test Rust guard (static + parity with Python)
         continue-on-error: ${{ github.event_name != 'pull_request' }}
         shell: bash
         env:
@@ -186,7 +191,7 @@ jobs:
           esac
           "$b" version
           python -m pip install --quiet -r requirements-dev.txt
-          python -m pytest tests/test_rust_binary.py --no-cov -p no:cacheprovider -q
+          python -m pytest tests/test_rust_binary.py tests/test_rust_commands.py --no-cov -p no:cacheprovider -q
 
       - name: Upload Rust guard (dry run only)
         if: github.event_name == 'pull_request'
