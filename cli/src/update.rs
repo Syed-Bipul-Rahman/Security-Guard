@@ -24,7 +24,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
-use crate::pyrepr;
+use crate::{net, pyrepr, util};
 
 /// Release identity, baked at compile time (release.yml sets these for tagged
 /// builds); the defaults match updater.py. As in updater.py, the environment
@@ -37,9 +37,6 @@ pub const DEFAULT_BASE_URL: &str = match option_env!("GUARD_UPDATE_URL") {
     Some(u) => u,
     None => "https://security.syedbipul.me/guard",
 };
-
-/// Largest manifest, blocklist or binary we accept.
-const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
 
 pub fn sha256_hex(data: &[u8]) -> String {
     Sha256::digest(data)
@@ -112,42 +109,8 @@ pub fn platform_key() -> String {
     format!("{os}-{arch}")
 }
 
-/// `http://` is only allowed to this machine (tests); everything else is HTTPS.
-fn is_loopback_http(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("http://") else {
-        return false;
-    };
-    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
-    let host = if host.starts_with('[') {
-        host.split(']').next().map(|h| &h[1..]).unwrap_or("")
-    } else {
-        host.split(':').next().unwrap_or("")
-    };
-    matches!(host, "127.0.0.1" | "localhost" | "::1")
-}
-
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
-    let loopback = is_loopback_http(url);
-    if !url.starts_with("https://") && !loopback {
-        return Err(format!("refusing non-HTTPS URL {url}"));
-    }
-    let mut cfg = ureq::Agent::config_builder()
-        .user_agent("guard-updater")
-        .timeout_connect(Some(Duration::from_secs(30)))
-        .timeout_recv_response(Some(Duration::from_secs(30)))
-        .timeout_global(Some(Duration::from_secs(900)))
-        .https_only(!loopback);
-    if loopback {
-        cfg = cfg.proxy(None); // never send a local test fetch through a proxy
-    }
-    let agent: ureq::Agent = cfg.build().into();
-    let mut resp = agent.get(url).call().map_err(|e| e.to_string())?;
-    resp.body_mut()
-        .with_config()
-        .limit(MAX_DOWNLOAD)
-        .read_to_vec()
-        .map_err(|e| e.to_string())
+    net::fetch(url, "guard-updater", Duration::from_secs(900), true)
 }
 
 fn verify(sig: &[u8], msg: &[u8], pk: &[u8]) -> bool {
@@ -177,17 +140,6 @@ pub struct Updater {
     exe: PathBuf,
 }
 
-fn default_home() -> PathBuf {
-    if let Some(h) = env::var_os("GUARD_HOME") {
-        return PathBuf::from(h);
-    }
-    let home = env::var_os("HOME")
-        .or_else(|| env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".guard")
-}
-
 fn log(msg: &str) {
     println!("{msg}");
 }
@@ -206,7 +158,7 @@ impl Updater {
                 hex_decode(&pubkey_hex)?
             },
             current: current.to_string(),
-            home: default_home(),
+            home: util::guard_home(),
             exe,
         })
     }
@@ -433,19 +385,6 @@ mod tests {
         assert_eq!(semver("0.0.3-pr5"), (0, 0, 35));
         assert!(semver("2.0.0") <= semver("2.0.0"));
         assert!(semver("10.0.0") > semver("9.9.9"));
-    }
-
-    #[test]
-    fn loopback_http_only() {
-        assert!(is_loopback_http("http://127.0.0.1:8000/x"));
-        assert!(is_loopback_http("http://localhost/x"));
-        assert!(is_loopback_http("http://[::1]:9/x"));
-        assert!(!is_loopback_http("http://example.com/x"));
-        assert!(!is_loopback_http("http://127.0.0.1.evil.com/x"));
-        assert!(!is_loopback_http("https://127.0.0.1/x"));
-        assert!(fetch("http://example.com/manifest.json")
-            .unwrap_err()
-            .contains("non-HTTPS"));
     }
 
     #[test]
