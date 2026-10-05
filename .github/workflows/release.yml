@@ -14,6 +14,13 @@ on:
   workflow_dispatch:
     inputs:
       version: { description: "version e.g. 1.1.0", required: true }
+  # Dry run: build and smoke-test every platform binary on PRs that touch the
+  # native core or the packaging, without baking secrets or publishing anything.
+  pull_request:
+    paths:
+      - "core/**"
+      - "build/**"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: write        # create the Release
@@ -41,7 +48,7 @@ jobs:
       # Dormant Windows code signing: turns on automatically once the SignPath
       # Foundation secrets exist (see docs/WINDOWS-CODE-SIGNING.md). Until then,
       # builds publish unsigned + SHA-256, exactly as before.
-      SIGNPATH_ENABLED: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+      SIGNPATH_ENABLED: ${{ github.event_name != 'pull_request' && secrets.SIGNPATH_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,10 +58,13 @@ jobs:
         id: v
         shell: bash
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then V="${{ github.event.inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          if [ -n "${{ github.event.inputs.version }}" ]; then V="${{ github.event.inputs.version }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then V="0.0.0-pr${{ github.event.number }}"
+          else V="${GITHUB_REF_NAME#v}"; fi
           echo "version=${V#v}" >> "$GITHUB_OUTPUT"
 
       - name: Bake release identity into the binary
+        if: github.event_name != 'pull_request'
         shell: bash
         env:
           PUBKEY: ${{ secrets.GUARD_UPDATE_PUBKEY }}
@@ -104,6 +114,20 @@ jobs:
           python -m pip install --quiet --upgrade pip pyinstaller certifi
           python -m pip install --quiet ./core
           pyinstaller build/guard.spec --distpath build/dist --workpath build/work --clean --noconfirm
+
+      # The frozen binary must load guard_core and run YARA rules, not just build.
+      - name: Smoke-test binary (Rust core + YARA)
+        shell: bash
+        run: |
+          case "${{ matrix.plat }}" in windows-*) g=build/dist/guard.exe ;; *) g=build/dist/guard ;; esac
+          mkdir -p smoke/sigs
+          printf 'rule smoke_test { meta: verdict = "malicious" strings: $a = "GUARD-RELEASE-SMOKE" condition: $a }\n' > smoke/sigs/smoke.yar
+          printf 'xx GUARD-RELEASE-SMOKE xx\n' > smoke/hit.txt
+          "$g" version
+          "$g" av rules --validate smoke/sigs/smoke.yar
+          set +e; out=$("$g" av scan --signatures smoke/sigs smoke/hit.txt); rc=$?; set -e
+          echo "$out"
+          [ "$rc" = 1 ] && echo "$out" | grep -q 'yara: smoke_test' || { echo "YARA smoke scan did not detect the test file"; exit 1; }
 
       - name: Name artifact
         id: name
@@ -158,6 +182,7 @@ jobs:
 
   release:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
