@@ -248,7 +248,13 @@ pyinstaller build/guard.spec --distpath build/dist --clean --noconfirm
 Rule matching and the content heuristics run in a Rust extension (`core/`,
 imported as `guard_core`). Without it, `guard_av` falls back to identical pure-Python
 code, about 15-60x slower on rule matching; `GUARD_AV_BACKEND=python` forces that
-fallback.
+fallback. The same extension gives the watcher native file-change events (inotify,
+FSEvents, ReadDirectoryChangesW), so it reacts to a new file in under a second
+without re-walking every watch root. It still runs a full snapshot pass at start,
+every `full_rescan_sec` (default 300) and whenever the OS drops events. Without the
+extension, or with `"native_events": false` in `watcher.config.json`, it polls every
+`poll_interval_sec` as before. On Linux each watched directory uses one inotify
+watch; if `fs.inotify.max_user_watches` runs out, the watcher logs it and polls.
 
 Releases are built for all five platforms by `.github/workflows/release.yml` on a
 `git tag vX.Y.Z`, which first runs the full test suite, then signs the OTA manifest

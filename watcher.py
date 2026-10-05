@@ -13,14 +13,22 @@ restarts on crash. Watches configured roots (dev folders, Downloads, Desktop) fo
 On a CRITICAL finding it writes an alert (JSONL) and, if configured, invokes a
 quarantine hook. It DETECTS and REPORTS; it never rewrites git history.
 
-Implementation: dependency-free polling snapshot diff (stdlib only). Production can
-swap in FSEvents/inotify/watchdog for lower latency; the event handling is the same.
+Implementation: native file-change events (inotify / FSEvents /
+ReadDirectoryChangesW, via the Rust guard_core.FsWatcher) tell the watcher which
+paths changed, so it reacts in well under a second instead of re-walking every
+root each poll. Every changed path still goes through the SQLite snapshot diff,
+which stays the source of truth: a full snapshot pass runs at start, whenever
+the OS reports dropped events, and every full_rescan_sec as a safety net (e.g.
+network filesystems that raise no events). Without guard_core, or with
+"native_events": false, it polls the snapshot every poll_interval_sec as before.
 State is persisted so a restart does not re-alert on everything already seen.
 
 Config (JSON), default <guard_home>/watcher.config.json:
 {
   "watch_roots": ["~/Projects", "~/Desktop", "~/Downloads"],
   "poll_interval_sec": 5,
+  "native_events": true,
+  "full_rescan_sec": 300,
   "max_depth": 6,
   "exclude_dir_names": ["node_modules", "dist", "build", ".next", "coverage", "Library"],
   "scan_new_files_ext": [".ts",".js",".mjs",".cjs",".json",".yml",".yaml",".env",
@@ -34,6 +42,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import stat as stat_mod
 import subprocess
 import sys
 import time
@@ -75,6 +84,9 @@ def _windows_user_profiles() -> list[str]:
 DEFAULT_CONFIG = {
     "watch_roots": ["~/Projects", "~/Desktop", "~/Downloads", "~/Documents"],
     "poll_interval_sec": 5,
+    "native_events": True,      # OS file events (guard_core); False = poll every interval
+    "full_rescan_sec": 300,     # full snapshot pass while on native events (safety net)
+    "native_queue_cap": 50000,  # buffered event paths before falling back to a full pass
     "max_depth": 6,
     "exclude_dir_names": ["node_modules", "dist", "build", ".next", "coverage",
                           "Library", ".Trash", "venv", ".venv", "__pycache__",
@@ -118,6 +130,12 @@ class Watcher:
         self.git_trigger = set(self.cfg["git_trigger_files"])
         self.max_depth = int(self.cfg["max_depth"])
         self.interval = float(self.cfg["poll_interval_sec"])
+
+        try:
+            self._home_real = self.home.resolve()
+        except OSError:
+            self._home_real = self.home
+        self._native = None  # guard_core.FsWatcher once run() starts it
 
         self.db_path = self.home / "watcher.snapshot.db"
         self.alert_path = self.home / "alerts.jsonl"
@@ -314,11 +332,12 @@ class Watcher:
                         hint = "skipped (access denied)"
                     self.log(f"WARNING: cannot read {fn} — {hint}")
 
-    def _iter_paths(self, root: Path):
-        """Yield (path, is_dir, mtime) up to max_depth, honoring excludes."""
+    def _iter_paths(self, root: Path, base: Path | None = None):
+        """Yield (path, is_dir, mtime) up to max_depth, honoring excludes.
+        `base` is the watch root when walking a subtree of it."""
         if not root.exists():
             return
-        root_depth = len(root.parts)
+        root_depth = len((base or root).parts)
         for dirpath, dirnames, filenames in os.walk(root, onerror=self._walk_onerror):
             d = Path(dirpath)
             depth = len(d.parts) - root_depth
@@ -504,7 +523,11 @@ class Watcher:
 
         if prime:
             return 0
+        return self._run_scans(repos_to_scan, files_to_scan)
 
+    def _run_scans(self, repos_to_scan: dict[str, str], files_to_scan: list[str]) -> int:
+        """Scan what a pass (polling or native events) found, plus any debounced
+        repo that has since settled."""
         handled = 0
         for repo, reason in repos_to_scan.items():
             if self._debounced(repo):
@@ -544,25 +567,163 @@ class Watcher:
             handled += 1
         return handled
 
+    # --------------------------------------------------------------- native events
+    def _scope_root(self, p: Path) -> Path | None:
+        best = None
+        for root in self.roots:
+            if (p == root or root in p.parents) and (best is None or len(root.parts) > len(best.parts)):
+                best = root
+        return best
+
+    def _in_scope(self, p: Path, is_dir: bool) -> Path | None:
+        """The watch root if the polling walk would report `p`, else None:
+        inside a root, not under an excluded dir or Guard's own home, and
+        within max_depth (entries of a dir at max_depth count, its subdirs don't)."""
+        if p == self._home_real or self._home_real in p.parents:
+            return None
+        root = self._scope_root(p)
+        if root is None or p == root:
+            return None
+        rel = p.relative_to(root).parts
+        if any(n in self.exclude for n in (rel if is_dir else rel[:-1])):
+            return None
+        parent_depth = len(rel) - 1
+        if parent_depth > self.max_depth or (is_dir and parent_depth == self.max_depth):
+            return None
+        return root
+
+    def handle_native(self, paths) -> int:
+        """Diff the paths native events reported against the snapshot and scan
+        what changed, exactly as a polling pass would for them. A directory new
+        to the snapshot is walked too: its contents may have landed before the
+        OS watch did (a clone, an extract, a folder moved in)."""
+        gen = self._store.current_generation()
+        batch: list[tuple[str, float]] = []
+        is_dir_map: dict[str, bool] = {}
+        repos_to_scan: dict[str, str] = {}
+        files_to_scan: list[str] = []
+
+        def flush():
+            changes = self._store.upsert_batch(batch, gen)
+            if changes:
+                self._handle_changes(changes, repos_to_scan, files_to_scan, is_dir_map)
+            batch.clear()
+            is_dir_map.clear()
+            self._memguard.check_and_throttle()
+
+        def add(path: str, is_dir: bool, mtime: float):
+            batch.append((path, mtime))
+            if is_dir:
+                is_dir_map[path] = True
+            if len(batch) >= self.batch_size:
+                flush()
+
+        for raw in paths:
+            p = Path(raw)
+            try:
+                st = p.stat()
+            except OSError:
+                continue  # already gone
+            is_dir = stat_mod.S_ISDIR(st.st_mode)
+            root = self._in_scope(p, is_dir)
+            if root is None:
+                continue
+            # Only a directory new to the snapshot is walked: Windows also
+            # reports a known directory as modified whenever an entry changes.
+            walk = is_dir and not self._store.contains(str(p))
+            add(str(p), is_dir, st.st_mtime)
+            if walk:
+                for sub, sub_dir, mtime in self._iter_paths(p, base=root):
+                    add(sub, sub_dir, mtime)
+        flush()
+        return self._run_scans(repos_to_scan, files_to_scan)
+
+    def _start_native(self):
+        if not self.cfg.get("native_events", True):
+            return None
+        try:
+            from guard_av._native import NATIVE
+        except Exception:
+            NATIVE = None
+        if NATIVE is None or not hasattr(NATIVE, "FsWatcher"):
+            self.log(f"native file events unavailable (no guard_core); polling every {self.interval}s")
+            return None
+        try:
+            fw = NATIVE.FsWatcher([str(r) for r in self.roots], sorted(self.exclude),
+                                  [str(self._home_real)], self.max_depth,
+                                  int(self.cfg.get("native_queue_cap", 50000)))
+        except OSError as exc:
+            self.log(f"native file events failed ({exc}); polling every {self.interval}s")
+            return None
+        self.log(f"native file events: {fw.backend}, {fw.watch_count} watch(es); "
+                 f"full rescan every {self.cfg.get('full_rescan_sec', 300)}s")
+        return fw
+
+    def _wait_native(self) -> tuple[list[str], bool]:
+        """Block up to poll_interval_sec for events -> (paths, overflow). Once
+        events arrive, keep collecting briefly so a burst (checkout, extract)
+        is handled as one batch. Short slices keep SIGTERM responsive."""
+        paths: list[str] = []
+        overflow = False
+        deadline = time.time() + self.interval
+        settle_until = None
+        while self._running:
+            now = time.time()
+            end = settle_until if settle_until is not None else deadline
+            if now >= end:
+                break
+            got, lost, errors = self._native.drain(min(0.5, end - now))
+            for e in errors:
+                self.log(f"native events: {e}")
+                if e.startswith("watch limit reached"):
+                    self.log("WARNING: OS file-watch limit reached (Linux: raise "
+                             "fs.inotify.max_user_watches); falling back to polling")
+                    self._native = None
+                    return paths, True
+            paths.extend(got)
+            overflow = overflow or lost
+            if (paths or overflow) and settle_until is None:
+                settle_until = min(time.time() + 0.3, deadline)
+            if overflow or len(paths) >= self.max_changes_per_pass:
+                break
+        return paths, overflow
+
     def run(self) -> None:
         signal.signal(signal.SIGTERM, self._stop)
         signal.signal(signal.SIGINT, self._stop)
         self.log(f"watcher started; roots={[str(r) for r in self.roots]} interval={self.interval}s")
         self.log(f"memguard: {self._memguard.summary()}")
         self._check_permissions()
+        # Start events before priming so nothing that lands meanwhile is missed.
+        self._native = self._start_native()
+        # A first full pass catches changes made while Guard was stopped
+        # (skipped right after priming, which just walked everything).
+        last_full = 0.0
         # Prime state silently on first run so we don't alert on the entire existing
         # tree. Uses the same batched, disk-backed path so priming is also low-memory.
         if self._store.is_empty():
             self.log("priming baseline snapshot (first run — existing files not re-alerted)")
             self.poll_once(prime=True)
             self.log(f"primed {self._store.count()} paths")
+            last_full = time.time()
         update_every = float(self.cfg.get("update_check_sec", 6 * 3600))  # OTA check cadence
         tel_every = float(self.cfg.get("telemetry_sec", 3600))            # telemetry cadence
+        full_every = float(self.cfg.get("full_rescan_sec", 300))
         last_update = 0.0
         last_tel = 0.0
         while self._running:
             try:
-                self.poll_once()
+                if self._native is None:
+                    self.poll_once()
+                else:
+                    paths, overflow = self._wait_native()
+                    if overflow or (time.time() - last_full) >= full_every or self._native is None:
+                        if overflow and last_full:
+                            self.log("native events dropped; running a full snapshot pass")
+                        last_full = time.time()
+                        self.poll_once()
+                    else:
+                        self.handle_native(paths)
             except Exception as exc:
                 self.log(f"poll error: {exc}")
             # Telemetry: periodic, or promptly after a new critical detection.
@@ -592,6 +753,8 @@ class Watcher:
                         os._exit(1 if sys.platform.startswith("win") else 0)
                 except Exception as exc:
                     self.log(f"update check error: {exc}")
+            if self._native is not None:
+                continue  # _wait_native already waited for events
             for _ in range(int(self.interval * 10)):
                 if not self._running:
                     break

@@ -8,10 +8,13 @@
 //! YARA rules (`yara.rs`) are compiled and matched by yara-x; the JSON rule
 //! format stays as a compatibility layer alongside them.
 //! Matching releases the GIL, so scans can run on several threads.
+//! `watch.rs` feeds the watcher native file-change events (step 3) in place
+//! of re-walking every watch root on a timer.
 
 pub mod entropy;
 pub mod heuristics;
 pub mod rules;
+pub mod watch;
 pub mod yara;
 
 use pyo3::exceptions::PyValueError;
@@ -110,6 +113,43 @@ impl PyYaraRules {
     }
 }
 
+/// Native file-change events over the watch roots. Python drains changed
+/// paths and still diffs them against its snapshot; `overflow` means events
+/// were lost and a full snapshot pass is needed.
+#[pyclass(name = "FsWatcher", frozen)]
+struct PyFsWatcher {
+    inner: watch::FsWatcher,
+}
+
+#[pymethods]
+impl PyFsWatcher {
+    #[new]
+    #[pyo3(signature = (roots, exclude, ignore, max_depth, queue_cap=50_000))]
+    fn new(py: Python<'_>, roots: Vec<std::path::PathBuf>, exclude: Vec<String>,
+           ignore: Vec<std::path::PathBuf>, max_depth: usize, queue_cap: usize) -> PyResult<Self> {
+        py.detach(|| watch::FsWatcher::new(roots, exclude, ignore, max_depth, queue_cap))
+            .map(|inner| PyFsWatcher { inner })
+            .map_err(pyo3::exceptions::PyOSError::new_err)
+    }
+
+    #[getter]
+    fn backend(&self) -> &'static str {
+        self.inner.backend()
+    }
+
+    #[getter]
+    fn watch_count(&self) -> usize {
+        self.inner.watch_count()
+    }
+
+    /// Waits up to `timeout` seconds -> (paths, overflow, errors).
+    fn drain(&self, py: Python<'_>, timeout: f64) -> (Vec<std::ffi::OsString>, bool, Vec<String>) {
+        let (paths, overflow, errors) =
+            py.detach(|| self.inner.drain(std::time::Duration::from_secs_f64(timeout.max(0.0))));
+        (paths.into_iter().map(|p| p.into_os_string()).collect(), overflow, errors)
+    }
+}
+
 #[pymodule]
 fn guard_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -120,5 +160,6 @@ fn guard_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(script_indicators, m)?)?;
     m.add_class::<PyRuleSet>()?;
     m.add_class::<PyYaraRules>()?;
+    m.add_class::<PyFsWatcher>()?;
     Ok(())
 }
