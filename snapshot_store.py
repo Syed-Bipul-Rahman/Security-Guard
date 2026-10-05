@@ -48,9 +48,18 @@ class SnapshotStore:
         self.conn.commit()
         return gen
 
+    def current_generation(self) -> int:
+        """Generation of the latest pass, for rows recorded between passes
+        (native file events) so the next sweep doesn't treat them as stale."""
+        row = self.conn.execute("SELECT v FROM meta WHERE k='gen'").fetchone()
+        return row[0] if row else 0
+
     def is_empty(self) -> bool:
         cur = self.conn.execute("SELECT 1 FROM paths LIMIT 1")
         return cur.fetchone() is None
+
+    def contains(self, path: str) -> bool:
+        return self.conn.execute("SELECT 1 FROM paths WHERE path=?", (path,)).fetchone() is not None
 
     def count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM paths").fetchone()[0]
