@@ -1,0 +1,36 @@
+# Test suite + 100% coverage gate + zero-false-positive sweep on every push / PR.
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: macos-14,      python: "3.12" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - name: Install test deps
+        run: python -m pip install --quiet -r requirements-dev.txt
+      - name: Unit + integration + accuracy tests (100% coverage gate)
+        run: python -m pytest --cov --cov-report=term-missing
+      - name: Full false-positive sweep (stdlib + system binaries)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        env: { GUARD_FP_FULL: "1" }
+        run: python -m pytest tests/test_detection_accuracy.py -k false_positives -p no:cacheprovider --no-cov
+      - name: Guard scans its own source clean
+        run: python -m guard_av scan . --fail-on-suspicious

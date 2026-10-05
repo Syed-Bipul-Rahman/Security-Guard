@@ -50,6 +50,7 @@ def _finding_dict(f) -> dict:
 # small (config files, injected IIFEs); reading a bounded prefix keeps memory flat
 # even if a repo contains multi-hundred-MB generated/vendored files.
 MAX_SCAN_BYTES = 5 * 1024 * 1024  # 5 MB
+AV_MAX_SCAN_BYTES = 16 * 1024 * 1024  # content the av engine examines per file
 
 
 def read_text_capped(path: Path, max_bytes: int = MAX_SCAN_BYTES) -> str | None:
@@ -83,6 +84,12 @@ class GuardScanner:
             self.workflow_baseline = WorkflowBaseline(matcher=self.matcher)
         except Exception:
             self.workflow_baseline = None
+        # General antivirus engine (hash DB + YARA-style rules + heuristics + archives)
+        try:
+            from guard_av.engine import EngineConfig, ScanEngine
+            self.av = ScanEngine.default(EngineConfig(max_scan_bytes=AV_MAX_SCAN_BYTES))
+        except Exception:
+            self.av = None
 
     def _skip(self, rel: str) -> bool:
         parts = set(rel.replace("\\", "/").split("/"))
@@ -97,7 +104,7 @@ class GuardScanner:
     def scan_tree(self, repo_path: str | Path) -> dict:
         repo = Path(repo_path)
         results = {"repo": str(repo), "vscode": [], "magic": [], "fingerprint": [],
-                   "workflow_baseline": [], "malicious_deps": [], "infected": False}
+                   "workflow_baseline": [], "malicious_deps": [], "av": [], "infected": False}
 
         # 1. VS Code pre-open guard (highest priority)
         results["vscode"] = [_finding_dict(f) for f in self.vscode.scan_repo(repo)]
@@ -131,6 +138,10 @@ class GuardScanner:
                     break
                 ext = path.suffix.lower()
 
+                av_hit = self.av_scan_file(path, rel)
+                if av_hit is not None:
+                    results["av"].append(av_hit)
+
                 if ext in self.BINARY_EXTS:
                     for f in self.magic.check_file(path):
                         d = _finding_dict(f)
@@ -157,6 +168,25 @@ class GuardScanner:
 
         results["infected"] = self._is_infected(results)
         return results
+
+    def av_scan_file(self, path: Path, rel: str | None = None) -> dict | None:
+        """Run the av engine on one file; a finding dict when not clean, else None."""
+        if self.av is None:
+            return None
+        from guard_av.engine import action_hint
+        from guard_av.model import Verdict
+        r = self.av.scan_file(path)
+        if r.error or r.verdict is Verdict.CLEAN:
+            return None
+        top = max(r.iter_detections(), key=lambda d: d.verdict)
+        return {
+            "path": rel or str(path), "where": rel or str(path),
+            "severity": "critical" if r.verdict is Verdict.MALICIOUS else "medium",
+            "sig_id": top.rule_id or top.name, "category": top.engine,
+            "desc": f"{r.threat_name}: {top.description}".rstrip(": "),
+            "threat": r.threat_name, "verdict": r.verdict.label,
+            "action": action_hint(r), "sha256": r.sha256,
+        }
 
     # ----------------------------------------------------------------- git
     def scan_git_history(self, repo_path: str | Path) -> dict:
@@ -192,7 +222,7 @@ class GuardScanner:
     # ------------------------------------------------------------- verdict
     @staticmethod
     def _is_infected(results: dict) -> bool:
-        for bucket in ("vscode", "magic", "fingerprint", "workflow_baseline", "malicious_deps"):
+        for bucket in ("vscode", "magic", "fingerprint", "workflow_baseline", "malicious_deps", "av"):
             if any(x.get("severity") == "critical" for x in results.get(bucket, [])):
                 return True
         return False
@@ -216,6 +246,7 @@ def _print_human(results: dict, git: dict | None) -> None:
     dump("MALICIOUS DEPENDENCIES (GitHub malware list)", results.get("malicious_deps", []))
     dump("BINARY-DISGUISED DROPPERS", results["magic"])
     dump("FINGERPRINT MATCHES", results["fingerprint"])
+    dump("ANTIVIRUS ENGINE (signatures / rules / heuristics)", results.get("av", []))
     if git:
         dump(f"GIT HISTORY (added lines, {git.get('commits_scanned', 0)} commits)", git.get("diff_findings", []))
         if git.get("error"):

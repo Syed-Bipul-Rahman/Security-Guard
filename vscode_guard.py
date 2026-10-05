@@ -81,8 +81,10 @@ class VSCodeGuard:
             return None, f"unreadable: {exc}"
         try:
             return json.loads(strip_jsonc(raw)), raw
-        except json.JSONDecodeError as exc:
-            return None, f"parse-error: {exc}"
+        except json.JSONDecodeError:
+            # hand back the RAW text so callers can fail closed with a substring
+            # check (a deliberately malformed file must not slip past the guard)
+            return None, raw
 
     def _check_settings(self, repo: Path) -> list[VSCodeFinding]:
         p = repo / self.settings_file

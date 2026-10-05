@@ -19,7 +19,12 @@ permissions:
   contents: write        # create the Release
 
 jobs:
+  test:
+    # never publish a build the test suite / coverage gate rejects
+    uses: ./.github/workflows/tests.yml
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:

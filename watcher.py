@@ -210,9 +210,9 @@ class Watcher:
         else:
             self._maybe_notify(repo, ["threat detected — manual review required"])
 
-    def _remediate_file(self, path: str, findings) -> None:
+    def _remediate_file(self, path: str, findings, is_dropper: bool = False) -> None:
         try:
-            dropper = Path(path).suffix.lower() in self._BINARY_MASK_EXTS
+            dropper = is_dropper or Path(path).suffix.lower() in self._BINARY_MASK_EXTS
             res = self._remediator().remediate_file(path, is_dropper=dropper)
         except Exception as exc:
             self.log(f"remediate error {path}: {exc}")
@@ -400,7 +400,7 @@ class Watcher:
             self.alert("vscode-autorun", repo, crit)
         # 2) tree scan
         results = self.scanner.scan_tree(repo)
-        tree_crit = [x for b in ("magic", "fingerprint") for x in results[b]
+        tree_crit = [x for b in ("magic", "fingerprint", "av") for x in results.get(b, [])
                      if x.get("severity") == "critical"]
         if tree_crit:
             self.alert("tree", repo, tree_crit)
@@ -427,6 +427,13 @@ class Watcher:
                 return
             findings = [str(f) for f in self.scanner.matcher.scan_content(str(p), content)
                         if getattr(f, "severity", "") == "critical"]
+        av_hit = self.scanner.av_scan_file(p)
+        if av_hit is not None and av_hit["severity"] == "critical":
+            findings.append(f"[CRITICAL] {path}: {av_hit['threat']} ({av_hit['sig_id']})")
+            if av_hit["action"] == "quarantine" and self.remediate:
+                self.alert("new-file", path, findings)
+                self._remediate_file(path, findings, is_dropper=True)
+                return
         if findings:
             self.alert("new-file", path, findings)
             if self.remediate:

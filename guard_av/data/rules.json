@@ -1,0 +1,475 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "test.eicar",
+      "name": "EICAR-Test-File",
+      "verdict": "malicious",
+      "category": "test",
+      "description": "EICAR anti-malware test file (harmless; used to verify AV is working)",
+      "whole_file": true,
+      "max_filesize": 128,
+      "strings": {
+        "$eicar": {
+          "hex": "58 35 4F 21 50 25 40 41 50 5B 34 5C 50 5A 58 35 34 28 50 5E 29 37 43 43 29 37 7D 24 45 49 43 41 52 2D 53 54 41 4E 44 41 52 44 2D 41 4E 54 49 56 49 52 55 53 2D 54 45 53 54 2D 46 49 4C 45 21 24 48 2B 48 2A"
+        }
+      },
+      "condition": {
+        "at": "$eicar",
+        "offset": 0
+      }
+    },
+    {
+      "id": "webshell.php.superglobal-exec",
+      "name": "Webshell.PHP.SuperglobalExec",
+      "verdict": "malicious",
+      "category": "webshell",
+      "description": "PHP passes raw request input to a code/command execution sink",
+      "filetypes": [
+        "php",
+        "text",
+        "html"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$sink": {
+          "regex": "\\b(?:eval|assert|system|passthru|shell_exec|exec|popen|proc_open|pcntl_exec)\\s*\\(\\s*(?:@\\s*)?(?:(?:base64_decode|gzinflate|gzuncompress|str_rot13|stripslashes)\\s*\\(\\s*)*\\$_(?:GET|POST|REQUEST|COOKIE|SERVER)\\s*\\[",
+          "nocase": true
+        }
+      },
+      "condition": "$sink"
+    },
+    {
+      "id": "hacktool.revshell.bash",
+      "name": "HackTool.ReverseShell.Bash",
+      "verdict": "malicious",
+      "category": "hacktool",
+      "description": "interactive shell redirected to a remote TCP socket",
+      "filetypes": [
+        "textual"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$rs": {
+          "regex": "\\b(?:ba)?sh\\s+-i\\s*>&\\s*/dev/tcp/[\\w.\\-]+/\\d{1,5}\\s+0>&1"
+        }
+      },
+      "condition": "$rs"
+    },
+    {
+      "id": "hacktool.revshell.netcat",
+      "name": "HackTool.ReverseShell.Netcat",
+      "verdict": "malicious",
+      "category": "hacktool",
+      "description": "netcat binds a shell to a network connection",
+      "filetypes": [
+        "textual"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$nc": {
+          "regex": "\\bn(?:c|cat|etcat)(?:[ \\t]+[^\\s;|&#]+){0,6}?[ \\t]+-e[ \\t]+/bin/(?:ba)?sh\\b"
+        }
+      },
+      "condition": "$nc"
+    },
+    {
+      "id": "hacktool.revshell.python",
+      "name": "HackTool.ReverseShell.Python",
+      "verdict": "malicious",
+      "category": "hacktool",
+      "description": "socket connected back, stdio duplicated onto it, shell spawned",
+      "filetypes": [
+        "textual"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "max_filesize": 65536,
+      "strings": {
+        "$connect": {
+          "regex": "\\.connect\\s*\\(\\s*\\("
+        },
+        "$dup": {
+          "regex": "os\\.dup2\\s*\\(\\s*\\w+\\.fileno\\(\\)\\s*,\\s*0\\s*\\)"
+        },
+        "$sh": {
+          "regex": "['\\\"]/bin/(?:ba)?sh['\\\"]"
+        }
+      },
+      "condition": {
+        "all": "them"
+      }
+    },
+    {
+      "id": "hacktool.mimikatz",
+      "name": "HackTool.Win.Mimikatz",
+      "verdict": "malicious",
+      "category": "hacktool",
+      "description": "Mimikatz credential-dumping tool",
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$m1": {
+          "text": "sekurlsa::logonpasswords",
+          "wide": true
+        },
+        "$m2": {
+          "text": "gentilkiwi",
+          "wide": true
+        },
+        "$m3": {
+          "text": "mimikatz",
+          "wide": true
+        },
+        "$m4": {
+          "text": "lsadump::sam",
+          "wide": true
+        }
+      },
+      "condition": {
+        "at_least": 2,
+        "of": "them"
+      }
+    },
+    {
+      "id": "trojan.ps.download-exec-hidden",
+      "name": "Trojan.PowerShell.DownloadExec",
+      "verdict": "malicious",
+      "category": "downloader",
+      "description": "PowerShell downloads and executes code while hiding/obfuscating itself",
+      "filetypes": [
+        "textual",
+        "ole",
+        "lnk",
+        "rtf"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$dl": {
+          "regex": "Net\\.WebClient|DownloadString|DownloadData|Invoke-WebRequest|Start-BitsTransfer",
+          "nocase": true
+        },
+        "$ex": {
+          "regex": "Invoke-Expression|\\bIEX\\b|\\|\\s*iex\\b",
+          "nocase": true
+        },
+        "$hid": {
+          "regex": "(?<![\\w-])-w(?:in|indow|indowstyle)?\\s+hidden",
+          "nocase": true
+        },
+        "$b64": {
+          "text": "FromBase64String",
+          "nocase": true
+        },
+        "$byp": {
+          "regex": "(?<![\\w-])-(?:ep|exec|executionpolicy)\\s+bypass",
+          "nocase": true
+        },
+        "$nop": {
+          "regex": "(?<![\\w-])-nop(?:rofile)?\\b",
+          "nocase": true
+        }
+      },
+      "condition": {
+        "and": [
+          "$dl",
+          "$ex",
+          {
+            "at_least": 2,
+            "of": [
+              "$hid",
+              "$b64",
+              "$byp",
+              "$nop"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "trojan.ps.amsi-bypass",
+      "name": "Trojan.PowerShell.AmsiBypass",
+      "verdict": "malicious",
+      "category": "defense-evasion",
+      "description": "disables the Antimalware Scan Interface in-process",
+      "filetypes": [
+        "powershell",
+        "text",
+        "batch",
+        "html",
+        "vbscript"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$u": {
+          "text": "System.Management.Automation.AmsiUtils",
+          "nocase": true,
+          "wide": true
+        },
+        "$f": {
+          "text": "amsiInitFailed",
+          "nocase": true,
+          "wide": true
+        }
+      },
+      "condition": {
+        "all": "them"
+      }
+    },
+    {
+      "id": "trojan.js.child-process-encoded",
+      "name": "Trojan.JS.EncodedExec",
+      "verdict": "malicious",
+      "category": "dropper",
+      "description": "Node child_process executes a base64-encoded command",
+      "filetypes": [
+        "textual"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$x": {
+          "regex": "child_process['\\\"]\\s*\\)\\s*\\.\\s*(?:exec|execSync|spawn|spawnSync)\\s*\\(\\s*(?:Buffer\\.from|atob)\\s*\\(\\s*['\\\"][A-Za-z0-9+/=]{16,}['\\\"]"
+        }
+      },
+      "condition": "$x"
+    },
+    {
+      "id": "trojan.py.exec-encoded-blob",
+      "name": "Trojan.Python.EncodedExec",
+      "verdict": "malicious",
+      "category": "dropper",
+      "description": "Python exec() of a decoded/decompressed embedded blob",
+      "filetypes": [
+        "textual"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$exec": {
+          "regex": "\\bexec\\s*\\(\\s*(?:__import__\\(\\s*['\\\"](?:base64|zlib|marshal|codecs)['\\\"]\\s*\\)|base64|zlib|marshal|codecs)\\.(?:b64decode|b32decode|b85decode|decompress|loads|decode)\\s*\\("
+        },
+        "$blob": {
+          "regex": "['\\\"][A-Za-z0-9+/=]{200,}['\\\"]"
+        }
+      },
+      "condition": {
+        "all": "them"
+      }
+    },
+    {
+      "id": "dropper.shell.base64-pipe",
+      "name": "Trojan.Shell.Base64Pipe",
+      "verdict": "malicious",
+      "category": "dropper",
+      "description": "decodes an embedded base64 payload straight into a shell",
+      "filetypes": [
+        "textual"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$p": {
+          "regex": "echo\\s+(?:-n\\s+)?['\\\"]?[A-Za-z0-9+/=]{40,}['\\\"]?\\s*\\|\\s*base64\\s+(?:-d|--decode|-D)\\s*\\|\\s*(?:ba|z|da)?sh\\b"
+        }
+      },
+      "condition": "$p"
+    },
+    {
+      "id": "dropper.vba.autoexec-download",
+      "name": "Trojan.VBA.AutoExecDownloader",
+      "verdict": "malicious",
+      "category": "macro",
+      "description": "auto-executing macro that downloads and runs a payload",
+      "filetypes": [
+        "textual",
+        "ole",
+        "rtf"
+      ],
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$auto": {
+          "regex": "\\b(?:AutoOpen|Auto_Open|Document_Open|Workbook_Open|AutoExec)\\b",
+          "nocase": true
+        },
+        "$run": {
+          "regex": "WScript\\.Shell|\\bShell\\s*\\(|\\.Run\\s*\\(|\\.ShellExecute\\b",
+          "nocase": true
+        },
+        "$net": {
+          "regex": "MSXML2\\.(?:Server)?XMLHTTP|WinHttp\\.WinHttpRequest|URLDownloadToFile",
+          "nocase": true
+        }
+      },
+      "condition": {
+        "all": "them"
+      }
+    },
+    {
+      "id": "pua.miner.stratum",
+      "name": "PUA.CoinMiner",
+      "verdict": "suspicious",
+      "category": "pua",
+      "description": "cryptocurrency miner configuration / binary",
+      "exclude_extensions": [
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".html",
+        ".htm"
+      ],
+      "strings": {
+        "$stratum": {
+          "regex": "stratum\\+(?:tcp|ssl|tls)://"
+        },
+        "$xmrig": {
+          "text": "xmrig",
+          "nocase": true
+        },
+        "$donate": {
+          "text": "--donate-level"
+        },
+        "$wallet": {
+          "regex": "\\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\\b"
+        }
+      },
+      "condition": {
+        "and": [
+          "$stratum",
+          {
+            "any": [
+              "$xmrig",
+              "$donate",
+              "$wallet"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ransom.note",
+      "name": "Ransom.Note",
+      "verdict": "suspicious",
+      "category": "ransomware",
+      "description": "ransom note demanding payment for decryption",
+      "max_filesize": 1048576,
+      "strings": {
+        "$enc": {
+          "regex": "(?:your|all)\\s+(?:important\\s+)?files\\s+(?:have\\s+been|were|are)\\s+encrypted",
+          "nocase": true
+        },
+        "$dec": {
+          "text": "decrypt",
+          "nocase": true
+        },
+        "$onion": {
+          "regex": "\\b[a-z2-7]{56}\\.onion\\b"
+        },
+        "$btc": {
+          "regex": "\\b(?:bc1[ac-hj-np-z02-9]{39,59}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\\b"
+        }
+      },
+      "condition": {
+        "and": [
+          "$enc",
+          "$dec",
+          {
+            "any": [
+              "$onion",
+              "$btc"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "npm.install-script.remote-shell",
+      "name": "Suspicious.NPM.InstallScriptPipeShell",
+      "verdict": "suspicious",
+      "category": "supply-chain",
+      "description": "npm lifecycle script pipes a downloaded file into a shell",
+      "filetypes": [
+        "textual"
+      ],
+      "strings": {
+        "$s": {
+          "regex": "\\\"(?:pre|post)?install\\\"\\s*:\\s*\\\"[^\\\"]*(?:curl|wget)\\b[^\\\"]*\\|\\s*(?:ba|z)?sh\\b"
+        }
+      },
+      "condition": "$s"
+    }
+  ]
+}
