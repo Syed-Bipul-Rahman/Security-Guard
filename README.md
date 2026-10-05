@@ -70,6 +70,10 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
 | `guard scan <path>` | full tree scan: fingerprints, disguised droppers, `.vscode` auto-run, workflows, malicious deps |
 | `guard scan-git <path>` | the above **plus** every added line across git history |
 | `guard open <path>` | pre-open check — is it safe to open this folder in VS Code? |
+| `guard av scan <path...>` | general antivirus scan: hash DB + YARA-style rules + heuristics + archives (`--json`, `--quarantine`, `--fail-on-suspicious`) |
+| `guard av quarantine list\|restore <id>\|delete <id>` | manage the neutered (encrypted-at-rest) quarantine vault |
+| `guard av rules [--validate FILE]` | list the loaded signatures / validate a custom rule file |
+| `guard av hash <file>` | print SHA-256 / SHA-1 / MD5 |
 | `guard clean <path>` | **remove** injected malware in place (excise/quarantine), backing up first |
 | `guard restore <path>` | undo a clean/quarantine from the backup store |
 | `guard watch` | the always-on filesystem watcher (what the service runs) |
@@ -128,6 +132,45 @@ looks clean. So Guard fixes the **working tree by content**, never git history:
 
 ---
 
+## Antivirus engine (`guard_av`, v2)
+
+Besides the incident-specific engines, Guard ships a general anti-malware engine
+(pure Python stdlib, no native deps). Every file goes through a layered pipeline:
+
+| Layer | What it does | Can produce |
+|---|---|---|
+| Content type ID | identifies PE / ELF / Mach-O / archives / scripts by **bytes**, not extension | — |
+| Allowlist | known-good SHA-256, trusted path globs, disabled rule ids | CLEAN (stops) |
+| Hash DB | exact MD5 / SHA-1 / SHA-256 signatures (JSON or `<hash> <name>` text lists) | MALICIOUS |
+| Rules | YARA-style rules: text (ascii/wide/nocase), hex with `??` / `[n-m]` jumps / `(a\|b)`, regex; boolean conditions (`all`/`any`/`at_least`/`at`/`count`/`filesize`) | MALICIOUS / SUSPICIOUS |
+| Heuristics | PE packers, encrypted executable sections, W+X sections, entry point outside code, process-injection / hollowing / keylogger API sets, ELF LD-preload rootkits, script obfuscation (encoded-blob exec, `_0x` obfuscator, char-code exec), PowerShell encoded/hidden/AMSI tampering, double/RTLO/masquerading filenames | SUSPICIOUS, MALICIOUS only when ≥3 strong independent indicators agree |
+| Archives | recursive zip / tar / gzip / bzip2 / xz, in memory, bomb-safe (depth, member count, size and ratio limits) | per-member verdicts |
+
+Bundled rules cover: EICAR, PHP webshells, bash / netcat / Python reverse shells,
+Mimikatz, PowerShell download-and-execute cradles and AMSI bypasses, Node and Python
+encoded-payload droppers, `base64 -d | sh` droppers, auto-exec VBA downloaders,
+coin miners (PUA), ransom notes and npm install scripts that pipe to a shell.
+
+**False-positive policy.** Only exact hashes and high-confidence rules may say
+MALICIOUS; heuristics alone top out at SUSPICIOUS. Documentation files (`.md`,
+`.rst`, `.txt`, `.html`) are excluded from hack-tool rules, and the engine
+allowlists its own signature databases. The test suite enforces **0 false
+positives** (not even SUSPICIOUS) over an adversarial benign corpus, the Python
+standard library, system binaries and this repository.
+
+**Custom signatures.** Drop `rules*.json`, `hashes*.json` / `hashes*.txt` and
+`allowlist*.json` into `~/.guard/av/` (or pass `--signatures DIR`).
+
+**Quarantine.** `guard av scan --quarantine` moves *whole-file* threats (malware
+binaries, hash hits, archives) into a vault where they are XOR-encrypted with a
+per-item key — never runnable, never re-detected by other AV — and restorable with
+SHA-256 verification. Malicious code found inside a legitimate source file is
+reported for review (or excised by `guard clean`), never deleted.
+
+The watcher, `guard scan` and `guard clean` all use this engine automatically.
+
+---
+
 ## Configuration
 
 `GUARD_HOME` (defaults: `/var/lib/guard` for the Linux/Windows service,
@@ -154,6 +197,23 @@ pyinstaller build/guard.spec --distpath build/dist --clean --noconfirm
 
 Releases are built for all five platforms by `.github/workflows/release.yml` on a
 `git tag vX.Y.Z`, which also signs the OTA manifest and publishes the GitHub Release.
+
+---
+
+## Testing
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest --cov                      # 400+ tests, 100% line + branch coverage gate
+GUARD_FP_FULL=1 python -m pytest tests/test_detection_accuracy.py -k false_positives --no-cov
+```
+
+The suite covers unit tests per engine, detection-rate tests (every malicious
+sample detected, also inside zip / tar.gz / gzip / nested archives), the zero
+false-positive sweep, and integration with the watcher, scanner, remediator and
+`guard` CLI. Live malware samples are stored base64-encoded and only decoded in
+memory, so the repository itself always scans clean. CI runs it on every push and
+the release workflow refuses to build if it fails.
 
 ---
 

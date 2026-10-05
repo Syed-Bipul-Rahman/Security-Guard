@@ -27,6 +27,8 @@ datas = [
     (str(ROOT / "permissions.py"), "."),
     (str(ROOT / "notifier.py"), "."),
     (str(ROOT / "remediator.py"), "."),
+    # general antivirus engine package + its signature databases
+    (str(ROOT / "guard_av"), "guard_av"),
     # signatures + config
     (str(ROOT / "signatures.json"), "."),
     (str(ROOT / "signatures.yaml"), "."),
@@ -54,6 +56,8 @@ hiddenimports = [
     "pathlib", "dataclasses", "datetime", "binascii", "gc", "ntpath", "stat",
     "tempfile", "runpy", "shutil", "urllib", "urllib.request", "urllib.error",
     "urllib.parse", "xml", "xml.etree", "xml.etree.ElementTree",
+    "zipfile", "tarfile", "gzip", "bz2", "lzma", "zlib", "io", "struct", "math",
+    "fnmatch", "secrets", "unicodedata", "collections", "enum",
     "ssl", "certifi",   # certifi provides the CA bundle so HTTPS works in the frozen binary
 ]
 if sys.platform != "win32":

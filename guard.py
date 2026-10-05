@@ -9,6 +9,8 @@ Commands:
   guard scan <path>        full repo/tree scan (fingerprints, droppers, vscode, workflows, malware deps)
   guard scan-git <path>    scan working tree AND every added line across git history
   guard open <path>        pre-open check: safe to open this folder in VS Code?
+  guard av scan <path>     antivirus engine: hash DB + YARA-style rules + heuristics + archives
+  guard av quarantine ...  list / restore / delete items in the neutered quarantine vault
   guard watch              start the always-on filesystem watcher (the service runs this)
   guard triage             host IR triage (reboots/persistence/recon/flood) - OS-native
   guard clean <path>       REMOVE injected malware: excise bad code, keep the real file (backs up first)
@@ -35,7 +37,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-VERSION = "1.0.19"
+VERSION = "2.0.0"
 
 # Telemetry destination — baked at release time from CI vars (empty in source).
 TELEMETRY_URL = os.environ.get("GUARD_TELEMETRY_URL", "")
@@ -71,6 +73,17 @@ def _run_module(module_file: str, argv: list[str]) -> int:
         return int(e.code) if isinstance(e.code, int) else (0 if e.code in (None, "") else 1)
     finally:
         sys.argv = old
+
+
+# ---------------------------------------------------------------------------
+# av: the general antivirus engine (package bundled next to this file)
+# ---------------------------------------------------------------------------
+def cmd_av(args: list[str]) -> int:
+    ad = str(app_dir())
+    if ad not in sys.path:
+        sys.path.insert(0, ad)
+    from guard_av.cli import main as av_main
+    return av_main(args)
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_module("scanner.py", ["scan-git"] + (rest or ["."]))
     if cmd == "open":
         return _run_module("scanner.py", ["guard-open"] + (rest or ["."]))
+    if cmd == "av":
+        return cmd_av(rest)
     if cmd == "watch":
         return _run_module("watcher.py", rest)
     if cmd == "triage":

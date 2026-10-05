@@ -491,6 +491,17 @@ class Remediator:
             seen.add(fp)
             dropper = Path(fp).suffix.lower() in binary_exts  # binary ext but flagged = masquerade
             route(self.remediate_file(fp, is_dropper=dropper))
+        # 3. av engine: whole-file threats (malware binaries, hash hits, EICAR, droppers)
+        #    are quarantined; code found inside a real source file goes to the normal
+        #    excise-or-manual path (a source file is never deleted).
+        for x in res.get("av", []):
+            if x.get("severity") != "critical":
+                continue
+            fp = self._abs(repo, x.get("path") or x.get("where"))
+            if not fp or fp in seen:
+                continue
+            seen.add(fp)
+            route(self.remediate_file(fp, is_dropper=x.get("action") == "quarantine"))
         return summary
 
     @staticmethod

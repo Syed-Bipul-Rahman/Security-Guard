@@ -139,6 +139,8 @@ def verify(signature: bytes, m: bytes, pk: bytes) -> bool:
         R = _decodepoint(signature[0:b // 8])
         A = _decodepoint(pk)
         S = _decodeint(signature[b // 8:b // 4])
+        if S >= L:
+            return False  # RFC 8032 5.1.7: reject non-canonical S (signature malleability)
         h = _Hint(_encodepoint(R) + pk + m)
         return _scalarmult(B, S) == _edwards(R, _scalarmult(A, h))
     except Exception:

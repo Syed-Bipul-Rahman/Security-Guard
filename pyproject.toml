@@ -1,0 +1,27 @@
+# Tooling config only — Guard ships as a PyInstaller binary (see build/), not a wheel.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.coverage.run]
+branch = true
+# The detection + remediation stack. Every line and branch here must be exercised
+# (CI enforces fail_under = 100). Platform service glue (watcher loop, installers,
+# OTA, telemetry, OS notifiers, Windows sensor) is integration-tested separately.
+source = [
+    "guard_av",
+    "scanner",
+    "fingerprint_matcher",
+    "magic_bytes",
+    "vscode_guard",
+    "workflow_baseline",
+    "dep_blocklist",
+    "remediator",
+    "ed25519_pure",
+]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = false
