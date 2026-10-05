@@ -26,7 +26,12 @@ jobs:
         with: { python-version: "${{ matrix.python }}" }
       - uses: dtolnay/rust-toolchain@stable
       - name: Rust unit tests
-        run: cargo test --manifest-path core/Cargo.toml
+        run: |
+          cargo test --manifest-path core/Cargo.toml
+          cargo test --manifest-path cli/Cargo.toml
+      # tests/test_rust_binary.py runs it against the Python code it replaces
+      - name: Build the Rust guard binary
+        run: cargo build --locked --manifest-path cli/Cargo.toml
       - name: Install test deps + Rust core
         run: |
           python -m pip install --quiet -r requirements-dev.txt
