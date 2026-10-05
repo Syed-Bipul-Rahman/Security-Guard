@@ -1,16 +1,48 @@
-# Guard — supply-chain malware agent
+# Guard — antivirus & supply-chain malware agent
+
+[![tests](https://github.com/Syed-Bipul-Rahman/Security-Guard/actions/workflows/tests.yml/badge.svg)](https://github.com/Syed-Bipul-Rahman/Security-Guard/actions/workflows/tests.yml)
+![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+![false positives](https://img.shields.io/badge/false%20positives-0-brightgreen)
+![version](https://img.shields.io/badge/version-2.0.0-blue)
 
 One self-contained `guard` binary for every user machine (**Linux / macOS /
-Windows**). It runs always-on, **detects** supply-chain malware (the fake-font
-dropper / `.vscode` auto-run / obfuscated `eval` C2 family), **auto-removes** it —
-excising the injected code while keeping your real files — and **warns the user**
-with a desktop notification, like a consumer antivirus. It self-updates over the
-air and can report status to an optional, self-hostable dashboard.
+Windows**). It runs always-on and combines two engines:
+
+- a **general antivirus engine** (`guard_av`) — hash signatures, YARA-style
+  rules, static heuristics and recursive archive scanning for webshells, reverse
+  shells, credential dumpers, droppers, malicious macros, packed injectors,
+  miners and more;
+- **supply-chain malware detection** for the fake-font dropper / `.vscode`
+  auto-run / obfuscated `eval` C2 family, including payloads hidden in git history.
+
+It **auto-removes** what it finds — excising injected code while keeping your
+real files, or moving whole-file malware into a neutered quarantine — and **warns
+the user** with a desktop notification, like a consumer antivirus. It
+self-updates over the air and can report status to an optional, self-hostable
+dashboard.
 
 - **Repo:** https://github.com/Syed-Bipul-Rahman/Security-Guard
 - **Releases:** https://github.com/Syed-Bipul-Rahman/Security-Guard/releases
 - **Install site:** https://security.sparktech.agency
 - **Demo dashboard:** https://security-guard-fkt3.vercel.app
+
+---
+
+## What's new in v2.0.0
+
+- **New antivirus engine (`guard_av`)** — layered hash DB → YARA-style rules →
+  heuristics → archive scanning, used automatically by the watcher, `guard scan`
+  and `guard clean`, and directly via `guard av ...`. See
+  [Antivirus engine](#antivirus-engine-guard_av-v2).
+- **Neutered quarantine vault** — whole-file threats are stored encrypted with a
+  per-item key and restored only after a SHA-256 integrity check.
+- **422 tests, 100% line + branch coverage** of the detection and remediation
+  stack, plus a **zero-false-positive** gate (Python stdlib, system binaries,
+  an adversarial benign corpus and this repo). CI runs on every push; releases
+  are only built when it passes.
+- **Fixes:** malformed `.vscode/settings.json` / `tasks.json` no longer slip past
+  the pre-open check (it now fails closed as intended), and OTA signature
+  verification rejects non-canonical Ed25519 signatures (RFC 8032).
 
 ---
 
@@ -37,13 +69,18 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
 
 ## Features
 
+- **Antivirus engine** — exact hash signatures, 15 high-confidence YARA-style
+  rules, static heuristics (packers, injection APIs, obfuscation, disguised
+  filenames) and bomb-safe zip / tar / gzip / bzip2 / xz scanning. Add your own
+  rules, hashes and allowlists without touching code.
 - **Always-on watcher** — detects repo clones, pulls/checkouts, new project dirs,
   and downloaded files, and scans them automatically. Bounded to <10% RAM.
 - **Auto-remediation (default on)** — on a critical hit it *removes the threat*,
   not just alerts:
   - **excises** an injected malicious IIFE from a real source file (keeps the
     imports/config around it),
-  - **quarantines** whole-file droppers (a fake `.woff2` that's actually JS),
+  - **quarantines** whole-file droppers (a fake `.woff2` that's actually JS) and
+    whole-file malware found by the antivirus engine,
   - **strips** `task.allowAutomaticTasks` and `folderOpen` dropper tasks from
     `.vscode`.
   Every change is backed up first and is reversible (`guard restore`).
@@ -67,7 +104,7 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
 
 | Command | What it does |
 |---|---|
-| `guard scan <path>` | full tree scan: fingerprints, disguised droppers, `.vscode` auto-run, workflows, malicious deps |
+| `guard scan <path>` | full tree scan: antivirus engine, fingerprints, disguised droppers, `.vscode` auto-run, workflows, malicious deps |
 | `guard scan-git <path>` | the above **plus** every added line across git history |
 | `guard open <path>` | pre-open check — is it safe to open this folder in VS Code? |
 | `guard av scan <path...>` | general antivirus scan: hash DB + YARA-style rules + heuristics + archives (`--json`, `--quarantine`, `--fail-on-suspicious`) |
@@ -87,7 +124,8 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
 | `guard install` / `guard uninstall` | set up / remove the auto-start service |
 | `guard version` | print version |
 
-Exit codes for scans: `0` clean, `1` infected (a `critical` finding), `2` usage/error.
+Exit codes for scans: `0` clean, `1` infected (a `critical` / malicious finding;
+with `guard av scan --fail-on-suspicious` also a suspicious one), `2` usage/error.
 
 ---
 
@@ -102,6 +140,13 @@ guard scan-git /path/to/repo
 
 # Pre-open gate: exit 1 means DO NOT OPEN this folder in VS Code
 guard open /path/to/repo
+
+# Antivirus scan of any files / folders (archives are unpacked and scanned too)
+guard av scan ~/Downloads
+guard av scan ./release.zip --json            # machine-readable report
+guard av scan ~/Downloads --quarantine        # move whole-file threats into the vault
+guard av quarantine list                      # ...and bring one back if needed
+guard av quarantine restore <id>
 
 # Manually clean an infected repo (the service does this automatically), then undo:
 guard clean /path/to/repo
@@ -180,6 +225,9 @@ The watcher, `guard scan` and `guard clean` all use this engine automatically.
 - `alerts.jsonl` — every detection (audit)
 - `watcher.log` — activity
 - `quarantine/` — backups of everything remediated + `index.jsonl` (for `guard restore`)
+- `av-quarantine/` — the antivirus engine's neutered vault (`guard av quarantine ...`)
+- `av/` — optional custom signatures: `rules*.json`, `hashes*.json` / `hashes*.txt`,
+  `allowlist*.json` (loaded automatically on every scan)
 
 ---
 
@@ -196,7 +244,8 @@ pyinstaller build/guard.spec --distpath build/dist --clean --noconfirm
 ```
 
 Releases are built for all five platforms by `.github/workflows/release.yml` on a
-`git tag vX.Y.Z`, which also signs the OTA manifest and publishes the GitHub Release.
+`git tag vX.Y.Z`, which first runs the full test suite, then signs the OTA manifest
+and publishes the GitHub Release.
 
 ---
 
@@ -222,18 +271,24 @@ the release workflow refuses to build if it fails.
 Contributions are welcome — especially new detection signatures.
 
 1. **Fork** and create a feature branch off `main`.
-2. **Signatures are data, not code.** Most new IOCs go in `signatures.json`
-   (fingerprints, dropper paths, `.vscode` rules); the engines reload it, no code
-   change needed. Add a matching fixture under `testdata/`.
+2. **Signatures are data, not code.** General malware rules and hashes go in
+   `guard_av/data/rules.json` / `hashes.json` (validate with
+   `guard av rules --validate <file>`); incident IOCs go in `signatures.json`
+   (fingerprints, dropper paths, `.vscode` rules). No code change needed. Add a
+   matching fixture under `testdata/`, or a base64-encoded sample in
+   `tests/samples.py` so live signatures never land in the repo.
 3. **Add tests / fixtures** for anything you change, and keep false positives at
-   zero (clean controls must still pass).
-4. Run the engines locally:
+   zero (clean controls must still pass, coverage must stay at 100%).
+4. Run the engines and the suite locally:
    ```bash
    guard scan testdata/<your-fixture>
+   python -m pytest --cov
    ```
 5. **Open a PR** describing the technique, the signature, and the fixture.
 
 Code layout: `guard.py` (entrypoint/CLI) · `scanner.py` (orchestrator) ·
+`guard_av/` (antivirus engine: `engine`, `rules`, `heuristics`, `archive`,
+`hashdb`, `allowlist`, `quarantine`, `filetype`, `cli`) ·
 `fingerprint_matcher.py` · `vscode_guard.py` · `magic_bytes.py` ·
 `workflow_baseline.py` · `dep_blocklist.py` (detection) · `watcher.py` (service) ·
 `remediator.py` (auto-clean) · `notifier.py` (alerts) · `updater.py` (OTA) ·
