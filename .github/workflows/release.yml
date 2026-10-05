@@ -15,10 +15,12 @@ on:
     inputs:
       version: { description: "version e.g. 1.1.0", required: true }
   # Dry run: build and smoke-test every platform binary on PRs that touch the
-  # native core or the packaging, without baking secrets or publishing anything.
+  # native core, the Rust binary or the packaging, without baking secrets or
+  # publishing anything.
   pull_request:
     paths:
       - "core/**"
+      - "cli/**"
       - "build/**"
       - ".github/workflows/release.yml"
 
@@ -128,6 +130,70 @@ jobs:
           set +e; out=$("$g" av scan --signatures smoke/sigs smoke/hit.txt); rc=$?; set -e
           echo "$out"
           [ "$rc" = 1 ] && echo "$out" | grep -q 'yara: smoke_test' || { echo "YARA smoke scan did not detect the test file"; exit 1; }
+
+      # The Rust port of guard (cli/), one static binary per platform. Built and
+      # tested next to the PyInstaller binary on every run; not published until
+      # it replaces it (PR dry runs upload it for trying out).
+      - name: Build static Rust guard
+        id: rs
+        # gates PR dry runs; never blocks a real release of the Python build
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
+        shell: bash
+        env:
+          GUARD_VERSION: ${{ steps.v.outputs.version }}
+          PUBKEY: ${{ secrets.GUARD_UPDATE_PUBKEY }}
+          UPURL: ${{ secrets.GUARD_UPDATE_URL }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            # same release identity the Python build gets baked in above
+            export GUARD_UPDATE_PUBKEY="$PUBKEY" GUARD_UPDATE_URL="$UPURL"
+          fi
+          case "${{ matrix.plat }}" in
+            linux-x64)     t=x86_64-unknown-linux-musl ;;
+            linux-arm64)   t=aarch64-unknown-linux-musl ;;
+            darwin-arm64)  t=aarch64-apple-darwin ;;
+            windows-x64)   t=x86_64-pc-windows-msvc ;;
+            windows-arm64) t=aarch64-pc-windows-msvc ;;
+          esac
+          case "$t" in
+            *-linux-musl)
+              sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+              export CC_${t//-/_}=musl-gcc ;;
+            *-windows-msvc)
+              export RUSTFLAGS="-C target-feature=+crt-static" ;;   # no VC++ runtime needed
+          esac
+          rustup target add "$t"
+          cargo build --release --locked --manifest-path cli/Cargo.toml --target "$t"
+          exe=""; case "$t" in *windows*) exe=.exe ;; esac
+          echo "bin=cli/target/$t/release/guard$exe" >> "$GITHUB_OUTPUT"
+
+      # Self-contained, and its signed self-update matches updater.py on this OS
+      # (including the rename swap on Windows).
+      - name: Test Rust guard (static + OTA parity)
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
+        shell: bash
+        env:
+          GUARD_RS_BIN: ${{ steps.rs.outputs.bin }}
+          GUARD_VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          b="$GUARD_RS_BIN"; ls -l "$b"
+          case "${{ matrix.plat }}" in
+            linux-*)  file "$b"; file "$b" | grep -Eq 'statically linked|static-pie linked' ;;
+            darwin-*) otool -L "$b"
+                      if otool -L "$b" | tail -n +2 | grep -Ev '^\s*/(usr/lib|System/Library)/'; then
+                        echo "links a non-system library"; exit 1
+                      fi ;;
+          esac
+          "$b" version
+          python -m pip install --quiet -r requirements-dev.txt
+          python -m pytest tests/test_rust_binary.py --no-cov -p no:cacheprovider -q
+
+      - name: Upload Rust guard (dry run only)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-guard-${{ matrix.plat }}
+          path: ${{ steps.rs.outputs.bin }}
 
       - name: Name artifact
         id: name

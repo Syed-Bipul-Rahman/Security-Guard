@@ -1,6 +1,8 @@
 # build artifacts
 build/dist/
 build/work/
+core/target/
+cli/target/
 __pycache__/
 *.pyc
 .DS_Store

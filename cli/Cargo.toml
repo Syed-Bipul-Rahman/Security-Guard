@@ -1,0 +1,27 @@
+[package]
+name = "guard"
+# Keep in step with guard.py VERSION (tests/test_rust_binary.py checks it).
+# Release builds override it with GUARD_VERSION at compile time.
+version = "2.0.0"
+edition = "2021"
+description = "Guard as one static binary: the Rust port of guard.py (step 4 of the Rust migration)"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "guard"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.23.1"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+sha2 = "0.11.0"
+# rustls + bundled Mozilla roots: HTTPS works in a static binary with no system
+# CA store, the job certifi did for the PyInstaller build.
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
