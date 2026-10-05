@@ -17,6 +17,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import PurePath
 
+from . import _native
 from . import filetype as ft
 from .hashing import shannon_entropy
 
@@ -29,6 +30,13 @@ class Indicator:
 
     def __str__(self) -> str:
         return f"{self.id}(+{self.score})"
+
+
+def _native_indicators(fn: str, data: bytes) -> list[Indicator] | None:
+    """Run the Rust port of a content check, or None to use the Python one."""
+    if _native.NATIVE is None:
+        return None
+    return [Indicator(i, s, d) for i, s, d in getattr(_native.NATIVE, fn)(data)]
 
 
 # Strong indicators are the ones allowed to count towards a MALICIOUS heuristic
@@ -137,6 +145,9 @@ def parse_pe(data: bytes) -> PEInfo | None:
 
 
 def pe_indicators(data: bytes) -> list[Indicator]:
+    nat = _native_indicators("pe_indicators", data)
+    if nat is not None:
+        return nat
     info = parse_pe(data)
     if info is None:
         return [Indicator("pe.malformed", 15, "MZ header without a valid PE structure")]
@@ -168,6 +179,9 @@ def pe_indicators(data: bytes) -> list[Indicator]:
 
 # ----------------------------------------------------------------------- ELF
 def elf_indicators(data: bytes) -> list[Indicator]:
+    nat = _native_indicators("elf_indicators", data)
+    if nat is not None:
+        return nat
     out: list[Indicator] = []
     if b"UPX!" in data[:4096] or b"UPX!" in data[-4096:]:
         out.append(Indicator("elf.packer", 25, "packed with UPX"))
@@ -179,6 +193,9 @@ def elf_indicators(data: bytes) -> list[Indicator]:
 
 
 def macho_indicators(data: bytes) -> list[Indicator]:
+    nat = _native_indicators("macho_indicators", data)
+    if nat is not None:
+        return nat
     if len(data) >= 4096 and shannon_entropy(data) > 7.4:
         return [Indicator("macho.high-entropy", 30, "body is encrypted/compressed")]
     return []
@@ -199,6 +216,9 @@ _AMSI = re.compile(rb"Amsi(?:Utils|ScanBuffer)|amsi(?:Init)Failed", re.I)
 
 
 def script_indicators(data: bytes) -> list[Indicator]:
+    nat = _native_indicators("script_indicators", data)
+    if nat is not None:
+        return nat
     out: list[Indicator] = []
     dyn = _DYNAMIC_EXEC.search(data) is not None
     if dyn and _B64_BLOB.search(data):

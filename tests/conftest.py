@@ -19,7 +19,17 @@ for p in (str(ROOT), str(TESTS)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+from guard_av import _native  # noqa: E402
 from guard_av.engine import EngineConfig, ScanEngine  # noqa: E402
+
+try:
+    import guard_core as NATIVE_MODULE
+except ImportError:  # the Rust extension isn't built: Python backend only
+    NATIVE_MODULE = None
+
+BACKENDS = ["python"] + (["rust"] if NATIVE_MODULE is not None else [])
+# Engine test modules run once per backend so Python and Rust stay identical.
+BACKEND_MODULES = ("test_av_", "test_detection_accuracy", "test_native_parity")
 
 EXEC, WRITE, READ, CODE = 0x20000000, 0x80000000, 0x40000000, 0x00000020
 
@@ -102,7 +112,21 @@ def gz(data: bytes) -> bytes:
     return gzip.compress(data)
 
 
-@pytest.fixture(scope="session")
+def pytest_generate_tests(metafunc):
+    if metafunc.module.__name__.startswith(BACKEND_MODULES):
+        metafunc.parametrize("av_backend", BACKENDS, indirect=True)
+
+
+@pytest.fixture(autouse=True)
+def av_backend(request, monkeypatch):
+    """Selects the engine backend for a test ("python" or "rust")."""
+    name = getattr(request, "param", None)
+    if name is not None:
+        monkeypatch.setattr(_native, "NATIVE", NATIVE_MODULE if name == "rust" else None)
+    yield _native.backend()
+
+
+@pytest.fixture
 def engine() -> ScanEngine:
     return ScanEngine.default()
 

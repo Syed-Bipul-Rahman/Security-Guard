@@ -7,6 +7,8 @@ import math
 from collections import Counter
 from pathlib import Path
 
+from . import _native
+
 CHUNK = 1024 * 1024
 
 
@@ -33,6 +35,8 @@ def hash_file(path: str | Path) -> dict[str, str]:
 
 def shannon_entropy(data: bytes) -> float:
     """Bits per byte, 0.0 (constant) .. 8.0 (uniformly random)."""
+    if _native.NATIVE is not None:
+        return _native.NATIVE.shannon_entropy(data)
     if not data:
         return 0.0
     n = len(data)
