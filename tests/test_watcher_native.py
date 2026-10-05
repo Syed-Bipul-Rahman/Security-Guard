@@ -159,7 +159,11 @@ def test_native_events_skip_excludes_and_home(make, tmp_path):
     w.log("noise in guard home")
     marker = touch(root / "marker.js")
     paths, _ = wait_for(w, str(marker))
-    assert not any("node_modules" in p for p in paths)
+    nm = root / "node_modules"
+    # FSEvents may still report the excluded directory itself (its creation
+    # arrives late); nothing inside it may come through, and scope drops it.
+    assert not any(nm in Path(p).parents for p in paths)
+    assert w._in_scope(nm, True) is None
     assert not any(p.startswith(str(w._home_real)) for p in paths)
 
 
