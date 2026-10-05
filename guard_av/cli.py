@@ -26,6 +26,7 @@ from .hashing import hash_file
 from .model import Verdict
 from .quarantine import QuarantineError, QuarantineVault
 from .rules import RuleError, RuleSet
+from .yara_rules import YARA_SUFFIXES, YaraRuleSet
 
 
 def guard_home() -> Path:
@@ -50,7 +51,7 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-archives", action="store_true")
     s.add_argument("--no-heuristics", action="store_true")
     s.add_argument("--signatures", action="append", default=[],
-                   help="extra directory of rules*.json / hashes*.{json,txt} / allowlist*.json")
+                   help="extra directory of *.yar / rules*.json / hashes*.{json,txt} / allowlist*.json")
 
     q = sub.add_parser("quarantine", help="manage the quarantine vault")
     qs = q.add_subparsers(dest="qcmd", required=True)
@@ -63,7 +64,8 @@ def _build_parser() -> argparse.ArgumentParser:
     d.add_argument("id")
 
     ru = sub.add_parser("rules", help="list or validate rules")
-    ru.add_argument("--validate", nargs="+", default=None)
+    ru.add_argument("--validate", nargs="+", default=None, metavar="FILE",
+                    help="check rules*.json or *.yar files")
 
     h = sub.add_parser("hash", help="print md5/sha1/sha256 of files")
     h.add_argument("files", nargs="+")
@@ -141,21 +143,37 @@ def cmd_quarantine(args) -> int:
         return 2
 
 
+def _validate(f: str) -> int:
+    if Path(f).suffix.lower() not in YARA_SUFFIXES:
+        return RuleSet().load(f)
+    y = YaraRuleSet()
+    y.load(f)
+    if y.unavailable:
+        raise RuntimeError("cannot check YARA rules: this build has no Rust core (guard_core)")
+    for w in y.warnings:
+        print(f"WARN {f}: {w}")
+    return len(y)
+
+
 def cmd_rules(args) -> int:
     if args.validate:
         rc = 0
         for f in args.validate:
             try:
-                n = RuleSet().load(f)
+                n = _validate(f)
                 print(f"OK   {f}: {n} rule(s)")
-            except (RuleError, OSError, ValueError) as exc:
+            except (RuleError, OSError, ValueError, RuntimeError) as exc:
                 print(f"FAIL {f}: {exc}")
                 rc = 2
         return rc
-    engine = ScanEngine.default()
+    home = guard_home() / "av"
+    engine = ScanEngine.default(extra_dirs=[home] if home.is_dir() else [])
     for r in engine.rules.rules:
         print(f"{r.id:45} {r.verdict.label:10} {r.name}")
-    print(f"\n{len(engine.rules)} rule(s), {len(engine.hashdb)} hash signature(s)")
+    print(f"\n{len(engine.rules)} rule(s), {len(engine.yara)} YARA rule(s), "
+          f"{len(engine.hashdb)} hash signature(s)")
+    if engine.yara.unavailable:
+        print("YARA rules were found but not loaded: this build has no Rust core (guard_core)")
     return 0
 
 

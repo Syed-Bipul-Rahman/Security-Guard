@@ -6,7 +6,8 @@ For every object (a file, or a member unpacked from an archive):
   1. hash (MD5/SHA-1/SHA-256, one pass) and identify the real type by content
   2. allowlist  -> known-good hash or trusted path: stop, CLEAN
   3. hash DB    -> exact match: MALICIOUS (zero-FP signature)
-  4. rules      -> YARA-style pattern rules: MALICIOUS or SUSPICIOUS
+  4. rules      -> YARA rules (*.yar, via yara-x) and the JSON rule format:
+                   MALICIOUS or SUSPICIOUS
   5. heuristics -> weighted static indicators, escalated only when they stack
   6. archives   -> recurse into members (bounded depth / size / count)
 
@@ -30,6 +31,7 @@ from .hashing import hash_bytes, hash_file
 from .heuristics import STRONG, analyze
 from .model import Detection, ScanResult, Verdict
 from .rules import RuleSet
+from .yara_rules import YARA_SUFFIXES, YaraRuleSet
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
@@ -84,6 +86,7 @@ class ScanEngine:
         self.rules = rules if rules is not None else RuleSet()
         self.hashdb = hashdb if hashdb is not None else HashDatabase()
         self.allowlist = allowlist if allowlist is not None else Allowlist()
+        self.yara = YaraRuleSet()
         self._cache: OrderedDict[tuple[str, str], ScanResult] = OrderedDict()
 
     # ------------------------------------------------------------- factory
@@ -107,6 +110,12 @@ class ScanEngine:
         for f in sorted(d.glob("rules*.json")):
             self.rules.load(f)
             self.allowlist.add_hash(hash_file(f)["sha256"])
+        yara_files = sorted(f for f in d.iterdir() if f.suffix.lower() in YARA_SUFFIXES and f.is_file())
+        for f in yara_files:
+            self.yara.load(f)
+            self.allowlist.add_hash(hash_file(f)["sha256"])
+        if yara_files:
+            self.yara.compile()      # fail here, naming the file, not mid-scan
         for f in sorted(d.glob("hashes*.json")) + sorted(d.glob("hashes*.txt")):
             self.hashdb.load(f)
             self.allowlist.add_hash(hash_file(f)["sha256"])
@@ -153,7 +162,7 @@ class ScanEngine:
                 description=f"{algo} matches a known-malware signature",
                 evidence=f"{algo}:{hashes[algo]}"))
 
-        for det in self.rules.scan(data, name, tag, size):
+        for det in self.rules.scan(data, name, tag, size) + self.yara.scan(data):
             if not self.allowlist.suppresses(det):
                 res.detections.append(det)
 
