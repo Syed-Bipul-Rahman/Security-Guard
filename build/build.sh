@@ -11,6 +11,14 @@ cd "$ROOT"
 
 python3 -m pip install --quiet --upgrade pyinstaller certifi
 
+# Rust core (rule matching + heuristics); needs a Rust toolchain (https://rustup.rs).
+# Without one the binary still works, using the slower pure-Python engine.
+if command -v cargo >/dev/null 2>&1; then
+  python3 -m pip install --quiet ./core
+else
+  echo "note: cargo not found; building without the Rust core (pure-Python engine)"
+fi
+
 # refresh the bundled blocklist snapshot so `guard deps check` works out of the box
 if [ ! -f malware-feed/malware-blocklist.json ]; then
   echo "note: no malware-blocklist.json to bundle; run 'guard deps update' after install, or"

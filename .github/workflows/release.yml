@@ -95,10 +95,14 @@ jobs:
           print("baked", ver, url, pub[:12] + "...")
           PY
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Build single binary
         shell: bash
+        env: { GUARD_REQUIRE_NATIVE: "1" }
         run: |
           python -m pip install --quiet --upgrade pip pyinstaller certifi
+          python -m pip install --quiet ./core
           pyinstaller build/guard.spec --distpath build/dist --workpath build/work --clean --noconfirm
 
       - name: Name artifact
