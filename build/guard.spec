@@ -63,6 +63,18 @@ hiddenimports = [
 if sys.platform != "win32":
     hiddenimports.append("resource")
 
+# Rust acceleration for guard_av (core/, `pip install ./core`). guard_av falls back
+# to pure Python without it, so a missing extension only warns, unless the build
+# sets GUARD_REQUIRE_NATIVE=1 (release CI does), where a slow binary is a bug.
+import os
+try:
+    import guard_core  # noqa: F401
+    hiddenimports.append("guard_core")
+except ImportError:
+    if os.environ.get("GUARD_REQUIRE_NATIVE") == "1":
+        raise SystemExit("guard_core is not installed: run `pip install ./core` first")
+    print("WARNING: guard_core not installed; building with the pure-Python engine")
+
 a = Analysis(
     [str(ROOT / "guard.py")],
     pathex=[str(ROOT)],

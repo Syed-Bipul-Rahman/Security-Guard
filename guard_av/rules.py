@@ -40,6 +40,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 
+from . import _native
 from . import filetype as ft
 from .model import Detection, Verdict
 
@@ -288,6 +289,7 @@ class Rule:
     exclude_extensions: frozenset = frozenset()
     max_filesize: int = 0
     whole_file: bool = False
+    spec: dict = field(default_factory=dict, repr=False)   # the source dict (fed to the Rust backend)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Rule":
@@ -315,6 +317,7 @@ class Rule:
             exclude_extensions=frozenset(e.lower() for e in d.get("exclude_extensions", [])),
             max_filesize=int(d.get("max_filesize", 0)),
             whole_file=bool(d.get("whole_file", False)),
+            spec=d,
         )
 
     def applies(self, name: str, tag: str, size: int) -> bool:
@@ -345,6 +348,8 @@ def _evidence(data: bytes, matches: dict[str, list[int]], width: int = 48) -> st
 class RuleSet:
     def __init__(self, rules: list[Rule] | None = None) -> None:
         self.rules: list[Rule] = list(rules or [])
+        self._native: tuple | None = None    # (backend module, compiled rules or None)
+        self.native_error = ""               # why the Rust backend declined these rules
 
     def __len__(self) -> int:
         return len(self.rules)
@@ -353,6 +358,7 @@ class RuleSet:
         if any(r.id == rule.id for r in self.rules):
             raise RuleError(f"duplicate rule id {rule.id}")
         self.rules.append(rule)
+        self._native = None
 
     def load_dicts(self, items: list[dict]) -> int:
         for d in items:
@@ -364,17 +370,38 @@ class RuleSet:
         items = data.get("rules", []) if isinstance(data, dict) else data
         return self.load_dicts(items)
 
+    def _compiled(self):
+        """The Rust-compiled form of these rules, or None to match in Python
+        (no native backend, or a pattern the Rust regex engine can't express)."""
+        nat = _native.NATIVE
+        if nat is None:
+            return None
+        if self._native is None or self._native[0] is not nat:
+            try:
+                compiled = nat.RuleSet(json.dumps([r.spec for r in self.rules]))
+                self.native_error = ""
+            except ValueError as exc:
+                compiled, self.native_error = None, str(exc)
+            self._native = (nat, compiled)
+        return self._native[1]
+
     def scan(self, data: bytes, name: str, tag: str, filesize: int | None = None) -> list[Detection]:
         size = len(data) if filesize is None else filesize
+        applicable = [i for i, r in enumerate(self.rules) if r.applies(name, tag, size)]
+        compiled = self._compiled() if applicable else None
+        if compiled is not None:
+            hits = compiled.scan(data, applicable, size, MAX_MATCHES_PER_STRING)
+        else:
+            hits = []
+            for i in applicable:
+                hit, matches = self.rules[i].match(data, size)
+                if hit:
+                    hits.append((i, _evidence(data, matches)))
         out: list[Detection] = []
-        for r in self.rules:
-            if not r.applies(name, tag, size):
-                continue
-            hit, matches = r.match(data, size)
-            if hit:
-                out.append(Detection(
-                    engine="rule", name=r.name, verdict=r.verdict, rule_id=r.id,
-                    description=r.description, evidence=_evidence(data, matches),
-                    whole_file=r.whole_file,
-                ))
+        for i, evidence in hits:
+            r = self.rules[i]
+            out.append(Detection(
+                engine="rule", name=r.name, verdict=r.verdict, rule_id=r.id,
+                description=r.description, evidence=evidence, whole_file=r.whole_file,
+            ))
         return out

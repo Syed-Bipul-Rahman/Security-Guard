@@ -194,7 +194,7 @@
           "nocase": true
         },
         "$hid": {
-          "regex": "(?<![\\w-])-w(?:in|indow|indowstyle)?\\s+hidden",
+          "regex": "(?:^|[^\\w-])-w(?:in|indow|indowstyle)?\\s+hidden",
           "nocase": true
         },
         "$b64": {
@@ -202,11 +202,11 @@
           "nocase": true
         },
         "$byp": {
-          "regex": "(?<![\\w-])-(?:ep|exec|executionpolicy)\\s+bypass",
+          "regex": "(?:^|[^\\w-])-(?:ep|exec|executionpolicy)\\s+bypass",
           "nocase": true
         },
         "$nop": {
-          "regex": "(?<![\\w-])-nop(?:rofile)?\\b",
+          "regex": "(?:^|[^\\w-])-nop(?:rofile)?\\b",
           "nocase": true
         }
       },

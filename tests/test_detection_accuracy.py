@@ -82,7 +82,7 @@ BENIGN: dict[str, bytes] = {
 }
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def eng() -> ScanEngine:
     return ScanEngine.default()
 

@@ -31,3 +31,6 @@ docs/WINDOWS-CODE-SIGNING.md
 .coverage
 coverage.xml
 htmlcov/
+
+# Rust build output
+core/target/

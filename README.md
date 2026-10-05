@@ -239,9 +239,15 @@ cross-compile, so build on each target OS:
 
 ```bash
 python -m pip install --upgrade pyinstaller certifi
+python -m pip install ./core                 # Rust core; needs a Rust toolchain (rustup.rs)
 pyinstaller build/guard.spec --distpath build/dist --clean --noconfirm
 ./build/dist/guard version
 ```
+
+Rule matching and the content heuristics run in a Rust extension (`core/`,
+imported as `guard_core`). Without it, `guard_av` falls back to identical pure-Python
+code, about 15-60x slower on rule matching; `GUARD_AV_BACKEND=python` forces that
+fallback.
 
 Releases are built for all five platforms by `.github/workflows/release.yml` on a
 `git tag vX.Y.Z`, which first runs the full test suite, then signs the OTA manifest
@@ -253,7 +259,9 @@ and publishes the GitHub Release.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest --cov                      # 400+ tests, 100% line + branch coverage gate
+pip install ./core                          # the coverage gate needs the Rust backend
+python -m pytest --cov                      # every engine test runs on both backends, 100% coverage gate
+cargo test --manifest-path core/Cargo.toml
 GUARD_FP_FULL=1 python -m pytest tests/test_detection_accuracy.py -k false_positives --no-cov
 ```
 

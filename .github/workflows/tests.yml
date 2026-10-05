@@ -24,8 +24,13 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python }}" }
-      - name: Install test deps
-        run: python -m pip install --quiet -r requirements-dev.txt
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust unit tests
+        run: cargo test --manifest-path core/Cargo.toml
+      - name: Install test deps + Rust core
+        run: |
+          python -m pip install --quiet -r requirements-dev.txt
+          python -m pip install --quiet ./core
       - name: Unit + integration + accuracy tests (100% coverage gate)
         run: python -m pytest --cov --cov-report=term-missing
       - name: Full false-positive sweep (stdlib + system binaries)
