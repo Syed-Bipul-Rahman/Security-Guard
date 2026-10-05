@@ -21,8 +21,17 @@ use super::pystr;
 use super::rules::RuleSet;
 use super::yara::{self, YaraRuleSet};
 
-static BUNDLED_RULES: &[u8] = include_bytes!("../../../guard_av/data/rules.json");
-static BUNDLED_HASHES: &[u8] = include_bytes!("../../../guard_av/data/hashes.json");
+// gzipped by build.rs: plain signature text in the binary would match the rules
+static BUNDLED_RULES_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/av-rules.json.gz"));
+static BUNDLED_HASHES_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/av-hashes.json.gz"));
+
+fn gunzip(gz: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(gz)
+        .read_to_end(&mut out)
+        .expect("bundled signatures decompress");
+    out
+}
 
 const MAX_SCAN_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ARCHIVE_DEPTH: usize = 3;
@@ -153,15 +162,13 @@ impl Engine {
             limits: Limits::default(),
             cache: Cache::default(),
         };
-        let bundled = |n: &str| format!("<bundled>/{n}");
+        let (rules, hashes) = (gunzip(BUNDLED_RULES_GZ), gunzip(BUNDLED_HASHES_GZ));
         e.rules
-            .load_text(&String::from_utf8_lossy(BUNDLED_RULES))
-            .map_err(|m| format!("{}: {m}", bundled("rules.json")))?;
-        e.allowlist
-            .add_hash(&hashing::hash_bytes(BUNDLED_RULES).sha256);
-        e.hashdb.load(Path::new("hashes.json"), BUNDLED_HASHES)?;
-        e.allowlist
-            .add_hash(&hashing::hash_bytes(BUNDLED_HASHES).sha256);
+            .load_text(&String::from_utf8_lossy(&rules))
+            .map_err(|m| format!("<bundled>/rules.json: {m}"))?;
+        e.allowlist.add_hash(&hashing::hash_bytes(&rules).sha256);
+        e.hashdb.load(Path::new("hashes.json"), &hashes)?;
+        e.allowlist.add_hash(&hashing::hash_bytes(&hashes).sha256);
         for d in extra_dirs {
             e.load_dir(d)?;
         }
