@@ -34,15 +34,17 @@ const PACKERS: &[(&[u8], &str)] = &[
     (b"nsp0", "NsPack"),
 ];
 
+// API names are stored reversed: spelled out, they would sit in guard.exe
+// itself, and a scan of the binary would flag it for process injection.
 const API_GROUPS: &[(&str, u32, &str, &[&[u8]])] = &[
     ("pe.api.process-injection", 45, "classic remote-process injection API set",
-     &[b"VirtualAllocEx", b"WriteProcessMemory", b"CreateRemoteThread"]),
+     &[b"xEcollAlautriV", b"yromeMssecorPetirW", b"daerhTetomeRetaerC"]),
     ("pe.api.process-hollowing", 45, "process-hollowing API set",
-     &[b"NtUnmapViewOfSection", b"SetThreadContext", b"ResumeThread"]),
+     &[b"noitceSfOweiVpamnUtN", b"txetnoCdaerhTteS", b"daerhTemuseR"]),
     ("pe.api.keylogger", 30, "global keyboard hook + key-state polling",
-     &[b"SetWindowsHookEx", b"GetAsyncKeyState"]),
+     &[b"xEkooHswodniWteS", b"etatSyeKcnysAteG"]),
     ("pe.api.anti-debug", 10, "debugger-detection APIs",
-     &[b"IsDebuggerPresent", b"CheckRemoteDebuggerPresent"]),
+     &[b"tneserPreggubeDsI", b"tneserPreggubeDetomeRkcehC"]),
 ];
 
 struct Section {
@@ -182,7 +184,7 @@ pub fn pe_indicators(data: &[u8]) -> Vec<Indicator> {
         }
     }
     for (id, score, desc, apis) in API_GROUPS {
-        if apis.iter().all(|a| contains(data, a)) {
+        if apis.iter().all(|a| contains(data, &a.iter().rev().copied().collect::<Vec<u8>>())) {
             out.push(ind(id, *score, *desc));
         }
     }

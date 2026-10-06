@@ -621,6 +621,11 @@ fn have_git() -> bool {
 }
 
 fn git(repo: &Path, args: &[&str]) {
+    // an empty global config (git for Windows can't open NUL as one)
+    let cfg = repo.with_extension("gitconfig");
+    if !cfg.exists() {
+        std::fs::write(&cfg, "").unwrap();
+    }
     let st = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -634,10 +639,7 @@ fn git(repo: &Path, args: &[&str]) {
             ("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z"),
             ("GIT_CONFIG_NOSYSTEM", "1"),
         ])
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            if WINDOWS { "NUL" } else { "/dev/null" },
-        )
+        .env("GIT_CONFIG_GLOBAL", &cfg)
         .output()
         .unwrap();
     assert!(
@@ -910,9 +912,9 @@ fn clean_relative_and_restore() {
         all.push_str(&format!("=== restore {target}\n{}", c.state(&out)));
     }
     let original = std::fs::read(c.tmp.join(".src/repo/src/server.ts")).unwrap();
-    assert_eq!(
-        std::fs::read(c.work.join("src/server.ts")).unwrap(),
-        original
+    assert!(
+        std::fs::read(c.work.join("src/server.ts")).unwrap() == original,
+        "src/server.ts was not restored:\n{all}"
     );
     golden(SUITE, "clean_relative_and_restore", &all);
 }
@@ -921,11 +923,13 @@ fn clean_relative_and_restore() {
 fn restore_by_backup_name() {
     let c = Clean::new(infected_repo);
     c.run(&["clean", "{w}"], None);
+    // without symlinks (Windows) the payload is cut from src/server.ts itself
+    let cut = if WINDOWS { "server.ts" } else { "server-link.ts" };
     let name = std::fs::read_dir(c.home.join("quarantine"))
         .unwrap()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .find(|n| n.contains("server-link.ts") && n.ends_with(".bak"))
+        .find(|n| n.contains(cut) && n.ends_with(".bak"))
         .unwrap();
     let out = c.run(&["restore", &name], None);
     golden(SUITE, "restore_by_backup_name", &c.state(&out));

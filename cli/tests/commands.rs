@@ -352,6 +352,8 @@ fn telemetry_report() {
         "{id}"
     );
     // the local copy is written as Python's json.dump(indent=2) wrote it
+    // (in text mode, so with CRLF on Windows)
+    let local_text = local_text.replace("\r\n", "\n");
     assert!(local_text.contains("\\u00e9vil"), "{local_text}");
     assert!(
         local_text.starts_with("{\n  \"schema\": \"guard-telemetry/1\","),

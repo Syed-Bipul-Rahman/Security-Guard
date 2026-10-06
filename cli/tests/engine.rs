@@ -1521,7 +1521,7 @@ fn clean_repo_routes_findings() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|p| p.as_str() == Some(&s(&w.join(rel))))
+            .any(|p| p.as_str() == Some(&s(&rel.split('/').fold(w.clone(), |p, c| p.join(c)))))
     };
     assert!(has("neutralized", "vite.config.js"));
     for q in [
