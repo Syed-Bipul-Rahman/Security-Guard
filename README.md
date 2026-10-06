@@ -129,6 +129,31 @@ with `guard av scan --fail-on-suspicious` also a suspicious one), `2` usage/erro
 
 ---
 
+## Git hooks
+
+`install.sh` installs one hook script as `post-checkout`, `post-merge`,
+`post-rewrite`, and `pre-push`.
+
+- After a clone, checkout, merge, or rebase the hook **reports** and exits 0.
+  It does not block the git command and it does not edit the tree (the watcher
+  still does the cleanup).
+- `pre-push` scans the **commits being pushed** (hook stdin: added lines in that
+  range, plus the blobs those commits introduce). A critical finding exits
+  non-zero, so `git push` stops, and prints how to bypass. The worktree is not
+  what gets scanned, and nothing in it is rewritten.
+
+```bash
+GUARD_HOOK_BYPASS=1 git push     # skip Guard, still run your own chained hook
+git push --no-verify             # skip every hook, including yours
+```
+
+If `core.hooksPath` is already set, the installer **does not replace it**. It
+copies Guard into that directory and keeps the previous script as
+`<hook>.guard-user`. Repo-local `.git/hooks/<name>` is chained the same way.
+`./install.sh --uninstall` puts a preserved user hook back.
+
+---
+
 ## Usage
 
 ```bash

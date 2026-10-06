@@ -11,6 +11,7 @@ Modes:
   scan-tree   : walk the working tree (default). Fast, no git required.
   scan-git    : also scan added lines across all commits on all branches
                 (catches payloads that live only in history).
+  scan-push   : scan the commits a pre-push hook is about to send (hook stdin).
   guard-open  : ONLY the .vscode pre-open check; exit 1 if unsafe to open.
 
 Exit codes: 0 = clean, 1 = infected (critical), 2 = usage/error.
@@ -219,6 +220,68 @@ class GuardScanner:
         out["infected"] = any(x.get("severity") == "critical" for x in out["diff_findings"])
         return out
 
+    def scan_push(self, repo_path: str | Path, hook_stdin: str) -> dict:
+        """Scan the commits named by git's pre-push stdin.
+
+        Each line is ``local_ref local_sha remote_ref remote_sha``. A delete
+        (local sha all zeros) is skipped. A new remote ref (remote sha all
+        zeros) scans that commit and its history; an update scans
+        ``remote_sha..local_sha`` and the blobs that update introduces.
+        The working tree is not consulted, so a dirty checkout cannot hide a
+        payload that is actually being pushed.
+        """
+        repo = Path(repo_path)
+        out: dict = {"repo": str(repo), "findings": [], "infected": False, "updates": 0, "error": None}
+        for line in hook_stdin.splitlines():
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            _local_ref, local_sha, _remote_ref, remote_sha = parts[:4]
+            if local_sha == _ZERO_SHA:
+                continue
+            out["updates"] += 1
+            try:
+                self._scan_push_update(repo, local_sha, remote_sha, out)
+            except (subprocess.CalledProcessError, FileNotFoundError, OSError) as exc:
+                out["error"] = f"git diff of push range failed: {exc}"
+                out["infected"] = True
+                return out
+        out["infected"] = any(x.get("severity") == "critical" for x in out["findings"])
+        return out
+
+    def _scan_push_update(self, repo: Path, local_sha: str, remote_sha: str, out: dict) -> None:
+        if remote_sha == _ZERO_SHA:
+            names = _git_out(repo, ["ls-tree", "-r", "--name-only", "-z", local_sha])
+            patch = _git_out(repo, ["log", "-p", "--no-color", local_sha])
+        else:
+            names = _git_out(repo, ["diff", "--name-only", "--diff-filter=ACMRT", "-z",
+                                    remote_sha, local_sha])
+            patch = _git_out(repo, ["log", "-p", "--no-color", f"{remote_sha}..{local_sha}"])
+        for finding in self.matcher.scan_diff(patch):
+            item = _finding_dict(finding)
+            item["commit"] = local_sha[:12]
+            out["findings"].append(item)
+        for name in names.split("\0"):
+            if not name:
+                continue
+            show = subprocess.run(
+                ["git", "-C", str(repo), "show", f"{local_sha}:{name}"],
+                capture_output=True,
+            )
+            if show.returncode != 0:
+                continue
+            self._scan_push_blob(name, show.stdout, out)
+
+    def _scan_push_blob(self, name: str, data: bytes, out: dict) -> None:
+        if Path(name).suffix.lower() in self.BINARY_EXTS:
+            for finding in self.magic.check_bytes(name, data):
+                item = _finding_dict(finding)
+                item["path"] = name
+                out["findings"].append(item)
+        text = data.decode("utf-8", errors="replace")
+        for finding in self.matcher.scan_content(name, text):
+            out["findings"].append(_finding_dict(finding))
+
     # ------------------------------------------------------------- verdict
     @staticmethod
     def _is_infected(results: dict) -> bool:
@@ -226,6 +289,26 @@ class GuardScanner:
             if any(x.get("severity") == "critical" for x in results.get(bucket, [])):
                 return True
         return False
+
+
+_ZERO_SHA = "0" * 40
+
+
+def _git_out(repo: Path, args: list[str]) -> str:
+    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, check=True)
+    return proc.stdout.decode("utf-8", errors="replace")
+
+
+def _print_push(pushed: dict) -> None:
+    print(f"Repo: {pushed['repo']}")
+    if pushed.get("error"):
+        print(f"  (push scan note: {pushed['error']})")
+    for item in pushed.get("findings", []):
+        sev = item.get("severity", "?").upper()
+        loc = item.get("path") or item.get("where") or ""
+        reason = item.get("reason") or item.get("desc") or item.get("detail") or ""
+        print(f"  [{sev}] {loc} {item.get('sig_id', '')} {reason}".rstrip())
+    print("\n" + ("RESULT: INFECTED (critical findings present)" if pushed.get("infected") else "RESULT: clean"))
 
 
 def _print_human(results: dict, git: dict | None) -> None:
@@ -258,10 +341,12 @@ def _print_human(results: dict, git: dict | None) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Guard supply-chain scanner")
-    ap.add_argument("mode", choices=["scan-tree", "scan-git", "guard-open"], nargs="?", default="scan-tree")
+    ap.add_argument("mode", choices=["scan-tree", "scan-git", "scan-push", "guard-open"],
+                    nargs="?", default="scan-tree")
     ap.add_argument("path", nargs="?", default=".")
     ap.add_argument("--signatures", default=None, help="path to signatures.json")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--stdin-file", default=None, help="read pre-push hook stdin from this file")
     args = ap.parse_args()
 
     sig = load_signatures(args.signatures)
@@ -278,6 +363,22 @@ def main() -> int:
                 print(f)
             print("SAFE TO OPEN" if safe else ">>> DO NOT OPEN — critical auto-run task detected")
         return 0 if safe else 1
+
+    if args.mode == "scan-push":
+        if args.stdin_file:
+            try:
+                hook_stdin = Path(args.stdin_file).read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                print(f"push scan: cannot read {args.stdin_file}: {exc}", file=sys.stderr)
+                return 2
+        else:
+            hook_stdin = sys.stdin.read()
+        pushed = scanner.scan_push(args.path, hook_stdin)
+        if args.json:
+            print(json.dumps(pushed, indent=2))
+        else:
+            _print_push(pushed)
+        return 1 if pushed["infected"] else 0
 
     results = scanner.scan_tree(args.path)
     git = scanner.scan_git_history(args.path) if args.mode == "scan-git" else None
