@@ -320,9 +320,12 @@ impl Norm {
         let mut out = input.to_string();
         let mut tags = Vec::new();
         for (from, tag) in &self.paths {
-            let escaped = from.replace('\\', "\\\\");
-            if escaped != *from {
-                out = out.replace(&escaped, tag);
+            // escaped once (JSON) or twice (a Python repr inside JSON)
+            for n in [4, 2] {
+                let escaped = from.replace('\\', &"\\".repeat(n));
+                if escaped != *from {
+                    out = out.replace(&escaped, tag);
+                }
             }
             out = out.replace(from, tag);
             tags.push(tag.clone());
@@ -354,7 +357,7 @@ fn slashes_after(s: &str, tags: &[String]) -> String {
                     match c {
                         '\\' => {
                             out.push('/');
-                            if let Some((_, '\\')) = it.peek() {
+                            while let Some((_, '\\')) = it.peek() {
                                 it.next();
                             }
                         }
