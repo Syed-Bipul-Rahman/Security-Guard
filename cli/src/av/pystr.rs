@@ -93,6 +93,16 @@ pub fn os_error(e: &std::io::Error, path: &str) -> String {
     }
 }
 
+/// str() of the OSError subprocess raises when it can't start `prog`. On
+/// Windows CreateProcess reports a WinError and no file name.
+pub fn spawn_error(e: &std::io::Error, prog: &str) -> String {
+    if cfg!(windows) && e.kind() == std::io::ErrorKind::NotFound {
+        "[WinError 2] The system cannot find the file specified".into()
+    } else {
+        os_error(e, prog)
+    }
+}
+
 #[cfg(not(windows))]
 fn errno_text(e: &std::io::Error) -> (Option<i32>, String) {
     let full = e.to_string();

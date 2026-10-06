@@ -33,6 +33,7 @@ sha2 = "0.11.0"
 # rustls + bundled Mozilla roots: HTTPS works in a static binary with no system
 # CA store, the job certifi did for the PyInstaller build.
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 [profile.release]
 lto = true
@@ -43,7 +44,7 @@ strip = true
 libc = "0.2"
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Wdk_System_SystemServices", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Win32_System_Threading", "Wdk_System_SystemServices", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 flate2 = "1"

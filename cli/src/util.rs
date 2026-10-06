@@ -2,7 +2,25 @@
 
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+type Sink = Box<dyn Fn(&str) + Send + Sync>;
+static LOG_SINK: OnceLock<Sink> = OnceLock::new();
+
+/// Where the updater, remediator and permission prompts write their progress
+/// lines: stdout, or the watcher's log once `guard watch` installs it (the
+/// Python modules take a `log=` callable for the same job).
+pub fn emit(msg: &str) {
+    match LOG_SINK.get() {
+        Some(sink) => sink(msg),
+        None => println!("{msg}"),
+    }
+}
+
+pub fn set_log_sink(sink: Sink) {
+    let _ = LOG_SINK.set(sink);
+}
 
 /// Python's Path.home().
 pub fn user_home() -> PathBuf {

@@ -130,6 +130,10 @@ impl Outcome {
     pub fn repr(&self) -> String {
         pyrepr::repr(&self.0)
     }
+
+    pub fn binary_updated(&self) -> bool {
+        self.0["binary_updated"] == true
+    }
 }
 
 pub struct Updater {
@@ -141,7 +145,7 @@ pub struct Updater {
 }
 
 fn log(msg: &str) {
-    println!("{msg}");
+    util::emit(msg);
 }
 
 impl Updater {

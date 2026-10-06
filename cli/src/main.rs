@@ -1,9 +1,8 @@
 //! guard — the single Guard entrypoint, as one static Rust binary.
 //!
-//! Step 4 of the Rust migration ports guard.py command by command. Until every
-//! command is here, releases keep shipping the PyInstaller build; this binary is
-//! built and tested next to it on every platform. Commands not ported yet exit 2
-//! with a message instead of guessing.
+//! Step 4 of the Rust migration ports guard.py command by command; every command
+//! is here now. Until the switch, releases keep shipping the PyInstaller build
+//! and this binary is built and tested next to it on every platform.
 
 mod av;
 mod deps;
@@ -17,6 +16,7 @@ mod scan;
 mod telemetry;
 mod update;
 mod util;
+mod watch;
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -55,12 +55,8 @@ Commands in this build:
 
   guard av scan <path>     antivirus engine: hash DB + YARA-style rules + heuristics + archives
   guard av quarantine ...  list / restore / delete items in the neutered quarantine vault
-
-Not ported to the Rust build yet (use the current release for this):
-  watch
+  guard watch              start the always-on filesystem watcher (the service runs this)
 ";
-
-const NOT_PORTED: &[&str] = &["watch"];
 
 fn report(r: Result<u8, String>) -> u8 {
     r.unwrap_or_else(|e| {
@@ -194,14 +190,9 @@ fn run(args: &[String]) -> u8 {
                 1
             }
         },
+        "watch" => watch::main(rest),
         "install" => report(install::run(false)),
         "uninstall" => report(install::run(true)),
-        c if NOT_PORTED.contains(&c) => {
-            eprintln!(
-                "guard: `{c}` is not in the Rust build yet; use the current guard release for it"
-            );
-            2
-        }
         c => {
             eprintln!("unknown command: {c}\n");
             eprint!("{USAGE}");

@@ -26,6 +26,22 @@ impl Finding {
     }
 }
 
+impl std::fmt::Display for Finding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[{}] {}: workflow {}",
+            self.severity.to_uppercase(),
+            self.path,
+            self.state
+        )?;
+        if !self.detail.is_empty() {
+            write!(f, " \u{2014} {}", self.detail)?;
+        }
+        Ok(())
+    }
+}
+
 /// Stable filesystem-safe key for a repo path.
 pub fn repo_key(repo: &str) -> String {
     let p = py::resolve(repo);

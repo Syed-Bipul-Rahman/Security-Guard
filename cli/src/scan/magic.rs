@@ -55,6 +55,22 @@ impl Finding {
     }
 }
 
+impl std::fmt::Display for Finding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[{}] {}: {}",
+            self.severity.to_uppercase(),
+            self.path,
+            self.reason
+        )?;
+        if !self.detail.is_empty() {
+            write!(f, " ({})", self.detail)?;
+        }
+        Ok(())
+    }
+}
+
 pub struct Checker {
     magic: Vec<(String, Vec<String>)>,
     indicators: Vec<String>,
