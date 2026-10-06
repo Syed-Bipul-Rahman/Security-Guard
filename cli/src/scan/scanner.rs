@@ -303,14 +303,7 @@ impl Scanner {
 fn git(argv: &[&str]) -> Result<String, String> {
     let out = match Command::new(argv[0]).args(&argv[1..]).output() {
         Ok(o) => o,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(if cfg!(windows) {
-                "[WinError 2] The system cannot find the file specified".into()
-            } else {
-                format!("[Errno 2] No such file or directory: '{}'", argv[0])
-            });
-        }
-        Err(e) => return Err(pystr::os_error(&e, argv[0])),
+        Err(e) => return Err(pystr::spawn_error(&e, argv[0])),
     };
     if !out.status.success() {
         let list = argv

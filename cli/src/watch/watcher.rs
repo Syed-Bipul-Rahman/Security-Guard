@@ -1172,7 +1172,7 @@ fn run_hook(cmd: &[Value], path: &str) -> Result<(), String> {
         .args(args)
         .arg(path)
         .spawn()
-        .map_err(|e| pystr::os_error(&e, prog))?;
+        .map_err(|e| pystr::spawn_error(&e, prog))?;
     let end = Instant::now() + Duration::from_secs(30);
     loop {
         if child.try_wait().map_err(|e| e.to_string())?.is_some() {
