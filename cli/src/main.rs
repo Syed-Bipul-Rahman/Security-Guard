@@ -5,6 +5,7 @@
 //! built and tested next to it on every platform. Commands not ported yet exit 2
 //! with a message instead of guessing.
 
+mod av;
 mod deps;
 mod install;
 mod net;
@@ -44,13 +45,14 @@ Commands in this build:
   guard update             check the signed update channel now (blocklist + binary)
   guard version            print version
 
+  guard av scan <path>     antivirus engine: hash DB + YARA-style rules + heuristics + archives
+  guard av quarantine ...  list / restore / delete items in the neutered quarantine vault
+
 Not ported to the Rust build yet (use the current release for these):
-  scan, scan-git, open, av, watch, clean, restore
+  scan, scan-git, open, watch, clean, restore
 ";
 
-const NOT_PORTED: &[&str] = &[
-    "scan", "scan-git", "open", "av", "watch", "clean", "restore",
-];
+const NOT_PORTED: &[&str] = &["scan", "scan-git", "open", "watch", "clean", "restore"];
 
 fn report(r: Result<u8, String>) -> u8 {
     r.unwrap_or_else(|e| {
@@ -154,6 +156,7 @@ fn run(args: &[String]) -> u8 {
                 1
             }
         }
+        "av" => av::main(rest),
         "deps" => report(deps::main(rest)),
         "telemetry" => match telemetry::run_once(&util::guard_home()) {
             Ok(res) => {

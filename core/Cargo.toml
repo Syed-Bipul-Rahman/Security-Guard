@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 memchr = "2.8.3"
 # Native file-change events for the watcher (inotify / FSEvents / ReadDirectoryChangesW).
 notify = { version = "8.2.0", default-features = false, features = ["macos_fsevent"] }
-pyo3 = { version = "0.29.3", features = ["abi3-py310"] }
+pyo3 = { version = "0.29.3", features = ["abi3-py310"], optional = true }
 regex = "1.13.1"
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 # YARA rules. Modules community rule sets rely on; skips vt/cuckoo (need external
@@ -27,8 +27,11 @@ yara-x = { version = "1.21.0", default-features = false, features = [
 ] }
 
 [features]
+default = ["python"]
+# The Python bindings. The static guard binary (cli/) links the engine without them.
+python = ["dep:pyo3"]
 # maturin turns this on for the Python extension build; `cargo test` leaves it off
-extension-module = ["pyo3/extension-module"]
+extension-module = ["python", "pyo3/extension-module"]
 
 [profile.release]
 lto = true
