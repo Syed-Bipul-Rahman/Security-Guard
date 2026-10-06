@@ -8,16 +8,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 before=$(git status --porcelain -- cli/tests/golden)
+rc=0
 GUARD_GOLDEN=record-os GUARD_REFERENCE="$PWD/guard.py" \
-  cargo test --locked --manifest-path cli/Cargo.toml --tests -q
+  cargo test --locked --manifest-path cli/Cargo.toml --tests -q --no-fail-fast || rc=$?
 after=$(git status --porcelain -- cli/tests/golden)
 if [ "$before" != "$after" ]; then
   echo "The Python build's output on this OS differs from the shared goldens."
   echo "Commit these per-OS goldens:"
   git status --porcelain -- cli/tests/golden | while read -r st path; do
     echo "=== $st $path"
-    [ -f "$path" ] && cat "$path"
+    if [ -f "$path" ]; then cat "$path"; echo; fi
   done
   exit 1
 fi
-cargo test --locked --manifest-path cli/Cargo.toml --tests -q
+[ "$rc" = 0 ] || exit "$rc"
+cargo test --locked --manifest-path cli/Cargo.toml --tests -q --no-fail-fast

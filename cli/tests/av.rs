@@ -618,7 +618,7 @@ fn quarantine_flow() {
         "{}",
         r0.stderr
     );
-    let dest = tmp.join("out/x.bin");
+    let dest = tmp.join("out").join("x.bin");
     let r1 = av(
         &tmp,
         &[
