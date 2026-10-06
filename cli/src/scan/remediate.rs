@@ -359,7 +359,7 @@ impl Remediator {
     }
 
     fn log(&self, msg: &str) {
-        println!("{msg}");
+        crate::util::emit(msg);
     }
 
     fn backup(&self, path: &str) -> Result<(PathBuf, String), String> {

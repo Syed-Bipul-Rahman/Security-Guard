@@ -7,12 +7,12 @@
 mod depbl;
 mod fingerprint;
 mod magic;
-mod py;
+pub(crate) mod py;
 pub mod remediate;
-mod scanner;
-mod sigs;
+pub(crate) mod scanner;
+pub(crate) mod sigs;
 mod vscode;
-mod workflow;
+pub(crate) mod workflow;
 
 use serde_json::{json, Value};
 

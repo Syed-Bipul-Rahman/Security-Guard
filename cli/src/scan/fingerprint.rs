@@ -45,6 +45,24 @@ impl Finding {
     }
 }
 
+impl std::fmt::Display for Finding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[{}] {}: {} ({}) \u{2014} {}",
+            self.severity.to_uppercase(),
+            self.where_,
+            self.sig_id,
+            self.category,
+            self.desc
+        )?;
+        if !self.evidence.is_empty() {
+            write!(f, "  <<{}>>", self.evidence)?;
+        }
+        Ok(())
+    }
+}
+
 struct Literal {
     id: String,
     severity: String,

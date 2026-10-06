@@ -122,15 +122,15 @@ pub fn request(open_settings_if_blocked: bool) -> Value {
     let still = res["blocked"].clone();
     let blocked_any = still.as_array().is_some_and(|a| !a.is_empty());
     if blocked_any {
-        println!(
+        crate::util::emit(&format!(
             "guard: still blocked after prompt: {}",
             crate::pyrepr::repr(&still)
-        );
+        ));
         if open_settings_if_blocked {
             open_fda_settings();
         }
     } else {
-        println!("guard: all watched locations are now readable.");
+        crate::util::emit("guard: all watched locations are now readable.");
     }
     json!({"ok": !blocked_any, "prompted": prompted, "still_blocked": still})
 }

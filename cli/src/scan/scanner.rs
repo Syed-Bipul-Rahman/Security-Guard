@@ -28,7 +28,7 @@ const MAX_SCAN_BYTES: u64 = 5 * 1024 * 1024;
 const AV_MAX_SCAN_BYTES: u64 = 16 * 1024 * 1024;
 /// A tree with more files than this is the wrong target: bail loudly.
 const MAX_FILES: usize = 50_000;
-const BINARY_EXTS: &[&str] = &[
+pub const BINARY_EXTS: &[&str] = &[
     ".woff2", ".woff", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg", ".gif", ".ico",
 ];
 const BUCKETS: &[&str] = &[
@@ -49,7 +49,7 @@ pub struct Scanner {
     av: Option<Engine>,
 }
 
-fn read_text_capped(p: &Path) -> Option<String> {
+pub fn read_text_capped(p: &Path) -> Option<String> {
     let mut raw = Vec::new();
     fs::File::open(p)
         .ok()?
@@ -122,7 +122,7 @@ impl Scanner {
     }
 
     /// The av engine on one file: a finding when it is not clean.
-    fn av_scan_file(&mut self, path: &str, rel: &str) -> Option<Value> {
+    pub fn av_scan_file(&mut self, path: &str, rel: &str) -> Option<Value> {
         let r = self.av.as_mut()?.scan_file(Path::new(path));
         if !r.error.is_empty() || r.verdict == Verdict::Clean {
             return None;
