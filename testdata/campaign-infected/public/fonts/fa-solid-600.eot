@@ -1,0 +1,2 @@
+                                                                global.i="A10-*001";
+function unused(){return 0;}

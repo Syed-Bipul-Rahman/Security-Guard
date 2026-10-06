@@ -16,6 +16,8 @@ So we remediate the WORKING TREE by content, with three strategies:
      aware bracket matcher (not a fragile regex), then cut out. The legitimate
      imports/config around it are untouched.
   2. Whole-file dropper             -> QUARANTINE the file (move to the store).
+     A config replaced entirely by a campaign payload, a fake font/image, or a
+     known push-helper script is quarantined the same way (recoverable).
   3. .vscode/settings.json|tasks.json -> remove only the offending key/task.
 
 SAFETY (this edits people's source, so it is conservative and reversible):
@@ -35,6 +37,8 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+from magic_bytes import CAMPAIGN_MARKER_RE
 
 # ---------------------------------------------------------------------------
 # string/comment-aware bracket matching (so we cut EXACT block bounds)
@@ -282,6 +286,22 @@ def _load_jsonc(path: Path):
 
 _SCRIPT_EXTS = {".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"}
 
+# Basenames the campaign replaces wholesale (no legitimate config left to keep).
+_CAMPAIGN_CONFIGS = {
+    "vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs",
+    "postcss.config.js", "postcss.config.mjs", "postcss.config.cjs", "postcss.config.ts",
+    "tailwind.config.js", "tailwind.config.ts", "tailwind.config.mjs", "tailwind.config.cjs",
+    "next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs",
+    "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs",
+    "ecosystem.config.js", "ecosystem.config.cjs",
+}
+# Local push helpers dropped beside the repo (usually gitignored, so they only
+# show up on a developer machine). branch_structure.json is too generic to key on.
+_CAMPAIGN_PUSHERS = {"temp_auto_push.bat", "temp_interactive_push.bat"}
+_CAMPAIGN_BINARY_EXTS = {
+    ".woff2", ".woff", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp",
+}
+
 
 class Remediator:
     def __init__(self, home: str | Path, log=print) -> None:
@@ -420,8 +440,10 @@ class Remediator:
             return self.clean_vscode_settings(p) or {"action": "noop", "path": str(p)}
         if parent == ".vscode" and name in ("tasks.json", "launch.json"):
             return self.clean_vscode_tasks(p) or {"action": "noop", "path": str(p)}
-        if is_dropper:
-            return self.quarantine_file(p, "whole-file dropper / masquerade payload")
+        if is_dropper or p.name.lower() in _CAMPAIGN_PUSHERS or self._is_campaign_payload(p):
+            reason = ("campaign push helper" if p.name.lower() in _CAMPAIGN_PUSHERS
+                      else "whole-file dropper / masquerade payload")
+            return self.quarantine_file(p, reason)
         if p.suffix.lower() in _SCRIPT_EXTS:
             r = self.neutralize_js(p)
             if r:
@@ -429,6 +451,21 @@ class Remediator:
         # A real source file we couldn't surgically clean: NEVER delete it.
         return {"action": "manual", "path": str(p),
                 "note": "malicious markers present but no safe automatic fix; manual review"}
+
+    def _is_campaign_payload(self, path: Path) -> bool:
+        """True when a config or fake-binary file is itself the campaign payload.
+
+        Ordinary source keeps the excise-or-manual path even if the marker is
+        present: we do not delete a file that may still contain real code.
+        """
+        name = path.name.lower()
+        if name not in _CAMPAIGN_CONFIGS and path.suffix.lower() not in _CAMPAIGN_BINARY_EXTS:
+            return False
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        return CAMPAIGN_MARKER_RE.search(text) is not None
 
     def clean_repo(self, repo: str | Path) -> dict:
         """Detect (reusing the scanner) then remediate every flagged file."""
@@ -473,7 +510,7 @@ class Remediator:
             self.log(f"remediate: scan error: {exc}")
             return summary
 
-        binary_exts = {".woff2", ".woff", ".ttf", ".otf", ".png", ".jpg", ".jpeg",
+        binary_exts = {".woff2", ".woff", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg",
                        ".ico", ".gif", ".webp"}
         for x in res.get("magic", []):
             if x.get("severity") != "critical":

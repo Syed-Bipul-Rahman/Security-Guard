@@ -23,7 +23,9 @@ OS="$(uname -s)"
 
 # watcher.py imports snapshot_store and memguard at startup. Leave either out and
 # the service crash-loops (ModuleNotFoundError) the moment launchd/systemd runs it.
-APP_FILES="scanner.py magic_bytes.py vscode_guard.py fingerprint_matcher.py workflow_baseline.py snapshot_store.py memguard.py watcher.py signatures.json signatures.yaml"
+# remediator.py is imported when a finding is cleaned. Leave it out and auto-clean
+# fails the first time the watcher tries to quarantine a payload.
+APP_FILES="scanner.py magic_bytes.py vscode_guard.py fingerprint_matcher.py workflow_baseline.py snapshot_store.py memguard.py remediator.py watcher.py signatures.json signatures.yaml"
 
 uninstall() {
     echo "Uninstalling Guard..."

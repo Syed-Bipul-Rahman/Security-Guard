@@ -32,6 +32,8 @@ literals:
   - { id: payload.fp.7,     severity: critical, category: obfuscated-c2, value: "auth-confirm-ten.vercel.app",      desc: "C2 host in obfuscated blob" }
   - { id: drop.cmd.1,       severity: critical, category: dropper-cmd,   value: "node ./public/fonts/",             desc: "Executes JS dropper under fonts/ path" }
   - { id: drop.cmd.2,       severity: critical, category: dropper-cmd,   value: "/public/fonts/fa-solid-400.woff2", desc: "Path to fake-font JS dropper" }
+  - { id: drop.cmd.3,       severity: critical, category: dropper-cmd,   value: "/public/fonts/fa-solid-500.woff2", desc: "Path to fake-font JS dropper (weight 500)" }
+  - { id: drop.cmd.4,       severity: critical, category: dropper-cmd,   value: "/public/fonts/fa-solid-600.eot", desc: "Path to fake-font JS dropper (EOT)" }
   - { id: vscode.autorun.literal, severity: critical, category: vscode-autorun, value: '"task.allowAutomaticTasks": true', desc: "Enables auto tasks on folder open", applies_to: [".vscode/settings.json"] }
   - { id: vscode.autorun.alt,     severity: critical, category: vscode-autorun, value: "task.allowAutomaticTasks: true",   desc: "Unquoted variant",                  applies_to: [".vscode/settings.json"] }
   - { id: vscode.task.runon,      severity: critical, category: vscode-autorun, value: '"runOn": "folderOpen"',            desc: "Task fires on folder open",         applies_to: [".vscode/tasks.json"] }
@@ -44,6 +46,13 @@ regexes:
     flags: DOTALL
     pattern: '\n?\s*\(async\s*\(\)\s*=>\s*\{.*?atob\s*\(\s*process\.env\.AUTH_API_KEY\s*\).*?eval\s*\(\s*proxyInfo\s*\).*?\}\s*\)\s*\(\s*\)\s*;'
     desc: "Async IIFE: atob(AUTH_API_KEY) ... eval(proxyInfo) ... }();"
+  - id: campaign.a10.marker
+    severity: critical
+    category: campaign-marker
+    flags: ""
+    requires: "A10-*"
+    pattern: "global\\s*\\.\\s*i\\s*=\\s*['\"]A10-\\*"
+    desc: "Whole-file campaign payload: global.i assigned an A10-* campaign id"
 
 combo_rules:
   - { id: iife.combo, severity: critical, category: eval-iife, all_of: ["eval(proxyInfo)", "atob(process.env.AUTH_API_KEY)"], desc: "Both markers present" }
@@ -71,7 +80,7 @@ magic_bytes:
     ".ico":   ["00000100"]
   text_body_indicators: ["require(", "global[", "process.env", "eval(", "function", "=>", "var _$_", "module.exports", "import "]
 
-known_dropper_filenames: ["fa-solid-400.woff2"]
+known_dropper_filenames: ["fa-solid-400.woff2", "temp_auto_push.bat", "temp_interactive_push.bat"]
 
 target_files:
   high_priority_configs:

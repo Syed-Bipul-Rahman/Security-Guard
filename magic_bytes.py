@@ -15,8 +15,19 @@ JS-ish indicators), flag it as a disguised dropper.
 from __future__ import annotations
 
 import binascii
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Keep this identical to signatures.json regex campaign.a10.marker.
+# The live samples assign global.i an A10-* campaign id near the start of a
+# replaced config or a whitespace-padded fake font. The asterisk is literal.
+CAMPAIGN_MARKER_TEXT = r"""global\s*\.\s*i\s*=\s*['"]A10-\*"""
+CAMPAIGN_MARKER_RE = re.compile(CAMPAIGN_MARKER_TEXT)
+CAMPAIGN_MARKER_BYTES = re.compile(CAMPAIGN_MARKER_TEXT.encode("ascii"))
+# Payloads pad with a few hundred spaces before the marker. Read past that
+# without treating the rest of a real font as text.
+CAMPAIGN_SCAN_BYTES = 65536
 
 
 # Loaded from signatures.json["magic_bytes"] in production; inlined defaults here
@@ -86,6 +97,14 @@ class MagicByteChecker:
         magic_ok = any(header.startswith(m) for m in expected) if expected else False
 
         findings: list[MagicFinding] = []
+        if CAMPAIGN_MARKER_BYTES.search(data[:CAMPAIGN_SCAN_BYTES]):
+            findings.append(MagicFinding(
+                path=path, severity="critical",
+                reason=f"campaign payload disguised as a {ext} file",
+                detail="global.i A10-* marker",
+            ))
+            return findings
+
         is_text, indicators = self._looks_like_text(data)
 
         if expected and not magic_ok and is_text:
@@ -117,7 +136,7 @@ class MagicByteChecker:
             # file — a disguised dropper reveals itself in the first few KB, and
             # this keeps memory flat regardless of file size.
             with p.open("rb") as fh:
-                data = fh.read(max(self.read_bytes, self.sniff_bytes))
+                data = fh.read(max(self.read_bytes, self.sniff_bytes, CAMPAIGN_SCAN_BYTES))
         except OSError as exc:
             return [MagicFinding(path=str(p), severity="info", reason="unreadable", detail=str(exc))]
         return self.check_bytes(str(p), data)
