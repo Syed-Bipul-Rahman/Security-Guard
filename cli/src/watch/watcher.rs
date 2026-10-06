@@ -1270,6 +1270,12 @@ mod tests {
         (w, root, base)
     }
 
+    /// `base` joined with a "/"-separated relative path, one component at a
+    /// time, so it reads the way the OS lists it on Windows too.
+    fn at(base: &Path, rel: &str) -> PathBuf {
+        rel.split('/').fold(base.to_path_buf(), |p, c| p.join(c))
+    }
+
     fn touch(p: &Path) -> PathBuf {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(p, b"x").unwrap();
@@ -1285,12 +1291,12 @@ mod tests {
     fn new_and_repeated_events() {
         let (mut w, root, base) = make("new");
         w.poll_once(true).unwrap();
-        let f = touch(&root.join("Downloads/a.js"));
+        let f = touch(&at(&root, "Downloads/a.js"));
         assert_eq!(w.handle_native(vec![f.clone()]).unwrap(), 1);
         // a repeat event with no newer mtime is not new work
         assert_eq!(w.handle_native(vec![f.clone()]).unwrap(), 0);
         // a burst reports one file several times: scanned once
-        let g = touch(&root.join("Downloads/b.js"));
+        let g = touch(&at(&root, "Downloads/b.js"));
         assert_eq!(w.handle_native(vec![g.clone(), g.clone(), g]).unwrap(), 1);
         // deleted before we looked
         assert_eq!(w.handle_native(vec![root.join("gone.js")]).unwrap(), 0);
@@ -1321,10 +1327,10 @@ mod tests {
     fn directory_moved_in_is_walked() {
         let (mut w, root, base) = make("moved");
         w.poll_once(true).unwrap();
-        let src = base.join("elsewhere/proj");
+        let src = at(&base, "elsewhere/proj");
         fs::create_dir_all(src.join(".git")).unwrap();
-        fs::write(src.join(".git/HEAD"), b"ref: refs/heads/main\n").unwrap();
-        touch(&src.join("src/index.js"));
+        fs::write(at(&src, ".git/HEAD"), b"ref: refs/heads/main\n").unwrap();
+        touch(&at(&src, "src/index.js"));
         let proj = root.join("proj");
         fs::rename(&src, &proj).unwrap();
         assert_eq!(w.handle_native(vec![proj.clone()]).unwrap(), 1);
@@ -1352,7 +1358,7 @@ mod tests {
             "d1/build",
             ".git/HEAD",
         ] {
-            touch(&root.join(rel));
+            touch(&at(&root, rel));
         }
         let mut walked = HashSet::new();
         w.iter_paths(&root.clone(), None, &mut |_, p, _, _| {
@@ -1375,11 +1381,11 @@ mod tests {
             .collect();
         assert_eq!(scoped, walked);
         // a *file* named like an excluded directory
-        assert!(scoped.contains(&root.join("d1/build").to_string_lossy().into_owned()));
+        assert!(scoped.contains(&at(&root, "d1/build").to_string_lossy().into_owned()));
         assert!(w
             .in_scope(&w.home_real.join("watcher.log"), false)
             .is_none());
-        assert!(w.in_scope(&base.join("other/a.js"), false).is_none());
+        assert!(w.in_scope(&at(&base, "other/a.js"), false).is_none());
         assert!(w.in_scope(&root, true).is_none());
         done(w, &base);
     }

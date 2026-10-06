@@ -43,7 +43,8 @@ pub fn repo_root() -> PathBuf {
 
 pub fn bin() -> PathBuf {
     match std::env::var_os("GUARD_RS_BIN") {
-        Some(p) => PathBuf::from(p),
+        // a relative path is from the repository root, as CI passes it
+        Some(p) => repo_root().join(p),
         None => PathBuf::from(env!("CARGO_BIN_EXE_guard")),
     }
 }
