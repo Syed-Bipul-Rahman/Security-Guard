@@ -33,7 +33,8 @@ fn gunzip(gz: &[u8]) -> Vec<u8> {
     out
 }
 
-const MAX_SCAN_BYTES: u64 = 64 * 1024 * 1024;
+/// Content examined per file; hashes always cover the whole file.
+pub const MAX_SCAN_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ARCHIVE_DEPTH: usize = 3;
 const SUSPICIOUS_THRESHOLD: u32 = 70;
 const MALICIOUS_THRESHOLD: u32 = 150;
@@ -44,6 +45,7 @@ const CACHE_SIZE: usize = 4096;
 pub struct Config {
     pub scan_archives: bool,
     pub heuristics: bool,
+    pub max_scan_bytes: u64,
 }
 
 #[derive(Default)]
@@ -380,7 +382,7 @@ impl Engine {
             let size = fs::metadata(p)?.len();
             let mut data = Vec::new();
             fs::File::open(p)?
-                .take(MAX_SCAN_BYTES)
+                .take(self.config.max_scan_bytes)
                 .read_to_end(&mut data)?;
             let hashes = if size <= data.len() as u64 {
                 hashing::hash_bytes(&data)

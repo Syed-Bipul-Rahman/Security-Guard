@@ -13,6 +13,7 @@ mod notify;
 mod permissions;
 mod pyjson;
 mod pyrepr;
+mod scan;
 mod telemetry;
 mod update;
 mod util;
@@ -27,13 +28,20 @@ pub const VERSION: &str = match option_env!("GUARD_VERSION") {
     None => env!("CARGO_PKG_VERSION"),
 };
 
-static TRIAGE_SH: &[u8] = include_bytes!("../../linux/guard-triage-linux.sh");
-static SYSMON_CONFIG: &[u8] = include_bytes!("../../windows/sysmon-config.xml");
+// gzipped by build.rs: both name the incident's IOCs, which in plain text would
+// make `guard scan` flag the binary itself
+static TRIAGE_SH_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/guard-triage-linux.sh.gz"));
+static SYSMON_CONFIG_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sysmon-config.xml.gz"));
 
 const USAGE: &str = "\
 guard - supply-chain and malware protection, one command: `guard <cmd>`.
 
 Commands in this build:
+  guard scan <path>        full repo/tree scan (fingerprints, droppers, vscode, workflows, malware deps)
+  guard scan-git <path>    scan working tree AND every added line across git history
+  guard open <path>        pre-open check: safe to open this folder in VS Code?
+  guard clean <path>       REMOVE injected malware: excise bad code, keep the real file (backs up first)
+  guard restore <path>     undo a clean/quarantine from the backup store
   guard triage             host IR triage (reboots/persistence/recon/flood) - OS-native
   guard permissions        check disk access; on macOS raise the \"Allow\" prompts (internal + removable)
   guard notify-test        show a sample threat popup (verify desktop alerts work)
@@ -48,11 +56,11 @@ Commands in this build:
   guard av scan <path>     antivirus engine: hash DB + YARA-style rules + heuristics + archives
   guard av quarantine ...  list / restore / delete items in the neutered quarantine vault
 
-Not ported to the Rust build yet (use the current release for these):
-  scan, scan-git, open, watch, clean, restore
+Not ported to the Rust build yet (use the current release for this):
+  watch
 ";
 
-const NOT_PORTED: &[&str] = &["scan", "scan-git", "open", "watch", "clean", "restore"];
+const NOT_PORTED: &[&str] = &["watch"];
 
 fn report(r: Result<u8, String>) -> u8 {
     r.unwrap_or_else(|e| {
@@ -76,7 +84,8 @@ fn triage(args: &[String]) -> u8 {
     // copy out so it's executable from anywhere
     let dir = std::env::temp_dir().join(format!("guard_{}", std::process::id()));
     let script: PathBuf = dir.join("triage.sh");
-    let written = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&script, TRIAGE_SH));
+    let written = std::fs::create_dir_all(&dir)
+        .and_then(|_| std::fs::write(&script, scan::gunzip(TRIAGE_SH_GZ)));
     if let Err(e) = written {
         eprintln!("could not stage the triage script: {e}");
         return 1;
@@ -100,7 +109,7 @@ fn triage(args: &[String]) -> u8 {
 /// Emit the bundled Sysmon config (guard.ps1 configures Sysmon from it).
 fn sysmon_config(args: &[String]) -> u8 {
     match args.first() {
-        Some(dest) => match std::fs::write(dest, SYSMON_CONFIG) {
+        Some(dest) => match std::fs::write(dest, scan::gunzip(SYSMON_CONFIG_GZ)) {
             Ok(()) => {
                 println!("wrote {dest}");
                 0
@@ -112,7 +121,9 @@ fn sysmon_config(args: &[String]) -> u8 {
         },
         None => {
             let mut out = std::io::stdout().lock();
-            let _ = out.write_all(SYSMON_CONFIG).and_then(|_| out.flush());
+            let _ = out
+                .write_all(&scan::gunzip(SYSMON_CONFIG_GZ))
+                .and_then(|_| out.flush());
             0
         }
     }
@@ -157,6 +168,10 @@ fn run(args: &[String]) -> u8 {
             }
         }
         "av" => av::main(rest),
+        "scan" => scan::main("scan-tree", rest),
+        "scan-git" => scan::main("scan-git", rest),
+        "open" => scan::main("guard-open", rest),
+        "clean" | "restore" => scan::remediate_main(cmd, rest),
         "deps" => report(deps::main(rest)),
         "telemetry" => match telemetry::run_once(&util::guard_home()) {
             Ok(res) => {

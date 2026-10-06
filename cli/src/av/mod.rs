@@ -11,13 +11,13 @@
 
 mod allowlist;
 mod archive;
-mod engine;
+pub(crate) mod engine;
 mod filetype;
 mod hashdb;
 mod hashing;
 mod heuristics;
-mod model;
-mod pystr;
+pub(crate) mod model;
+pub(crate) mod pystr;
 mod quarantine;
 mod rules;
 mod yara;
@@ -257,6 +257,7 @@ fn cmd_scan(vault: Option<&str>, argv: &[String]) -> Result<u8, String> {
     let cfg = Config {
         scan_archives: !a.has("--no-archives"),
         heuristics: !a.has("--no-heuristics"),
+        max_scan_bytes: engine::MAX_SCAN_BYTES,
     };
     let mut engine = Engine::new(cfg, &existing_dirs(extra)).map_err(fatal)?;
     let vault = a.has("--quarantine").then(|| vault_for(vault));
@@ -432,6 +433,7 @@ fn cmd_rules(argv: &[String]) -> Result<u8, String> {
     let cfg = Config {
         scan_archives: true,
         heuristics: true,
+        max_scan_bytes: engine::MAX_SCAN_BYTES,
     };
     let engine = Engine::new(cfg, &existing_dirs(vec![home])).map_err(fatal)?;
     for r in &engine.rules.rules {

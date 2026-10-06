@@ -37,7 +37,7 @@ pub fn repr(v: &Value) -> String {
         Value::Null => "None".into(),
         Value::Bool(true) => "True".into(),
         Value::Bool(false) => "False".into(),
-        Value::Number(n) => n.to_string(),
+        Value::Number(n) => crate::pyjson::number(n),
         Value::String(s) => str_repr(s),
         Value::Array(a) => format!("[{}]", a.iter().map(repr).collect::<Vec<_>>().join(", ")),
         Value::Object(o) => format!(
