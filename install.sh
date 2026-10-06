@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # install.sh — deploy Guard on a macOS/Linux workstation.
 #
-#   * copies the scanner app into $GUARD_HOME/app
+#   * copies the guard binary into $GUARD_HOME/bin (from $GUARD_BIN, a cargo
+#     build in cli/target/release, or a fresh `cargo build --release`)
 #   * installs GLOBAL git hooks (post-checkout/merge/rewrite) so every clone/pull
 #     is scanned before you open it
 #   * installs + starts the always-on watcher service (launchd / systemd)
@@ -15,13 +16,11 @@
 set -euo pipefail
 
 GUARD_HOME="${GUARD_HOME:-$HOME/.guard}"
-GUARD_APP="$GUARD_HOME/app"
+GUARD_BIN_DIR="$GUARD_HOME/bin"
+GUARD="$GUARD_BIN_DIR/guard"
 HOOKS_DIR="$GUARD_HOME/githooks"
-PYTHON="${GUARD_PYTHON:-python3}"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 OS="$(uname -s)"
-
-APP_FILES="scanner.py magic_bytes.py vscode_guard.py fingerprint_matcher.py workflow_baseline.py watcher.py signatures.json signatures.yaml"
 
 uninstall() {
     echo "Uninstalling Guard..."
@@ -48,13 +47,22 @@ uninstall() {
 [ "${1:-}" = "--uninstall" ] && uninstall
 
 echo "==> Installing Guard to $GUARD_HOME"
-mkdir -p "$GUARD_APP" "$HOOKS_DIR"
+mkdir -p "$GUARD_BIN_DIR" "$HOOKS_DIR"
 
-# 1. Copy app
-for f in $APP_FILES; do
-    cp "$SRC_DIR/$f" "$GUARD_APP/$f"
-done
-echo "    app -> $GUARD_APP"
+# 1. The guard binary
+src_bin="${GUARD_BIN:-$SRC_DIR/cli/target/release/guard}"
+if [ ! -x "$src_bin" ]; then
+    command -v cargo >/dev/null 2>&1 || {
+        echo "    no guard binary at $src_bin and no cargo to build one." >&2
+        echo "    Set GUARD_BIN to a downloaded release binary, or install Rust (https://rustup.rs)." >&2
+        exit 1
+    }
+    echo "    building guard (cargo build --release)..."
+    cargo build --release --locked --manifest-path "$SRC_DIR/cli/Cargo.toml"
+    src_bin="$SRC_DIR/cli/target/release/guard"
+fi
+cp "$src_bin" "$GUARD.tmp" && chmod +x "$GUARD.tmp" && mv -f "$GUARD.tmp" "$GUARD"
+echo "    binary -> $GUARD ($("$GUARD" version))"
 
 # 2. Global git hooks
 for hook in post-checkout post-merge post-rewrite; do
@@ -71,7 +79,7 @@ echo "    global git hooks -> $HOOKS_DIR (post-checkout/merge/rewrite)"
 
 # 3. Default watcher config (only if absent — don't clobber local edits)
 if [ ! -f "$GUARD_HOME/watcher.config.json" ]; then
-    GUARD_HOME="$GUARD_HOME" "$PYTHON" "$GUARD_APP/watcher.py" --print-default-config \
+    GUARD_HOME="$GUARD_HOME" "$GUARD" watch --print-default-config \
         > "$GUARD_HOME/watcher.config.json"
     echo "    default config -> $GUARD_HOME/watcher.config.json (edit watch_roots as needed)"
 fi
@@ -81,8 +89,7 @@ case "$OS" in
     Darwin)
         plist="$HOME/Library/LaunchAgents/me.syedbipul.guard.plist"
         mkdir -p "$HOME/Library/LaunchAgents"
-        sed -e "s|__PYTHON__|$(command -v "$PYTHON")|g" \
-            -e "s|__GUARD_APP__|$GUARD_APP|g" \
+        sed -e "s|__GUARD_BIN__|$GUARD|g" \
             -e "s|__GUARD_HOME__|$GUARD_HOME|g" \
             "$SRC_DIR/service/macos/me.syedbipul.guard.plist" > "$plist"
         launchctl bootout "gui/$(id -u)/me.syedbipul.guard" 2>/dev/null || true
@@ -93,8 +100,7 @@ case "$OS" in
     Linux)
         unit="$HOME/.config/systemd/user/guard.service"
         mkdir -p "$HOME/.config/systemd/user"
-        sed -e "s|__PYTHON__|$(command -v "$PYTHON")|g" \
-            -e "s|__GUARD_APP__|$GUARD_APP|g" \
+        sed -e "s|__GUARD_BIN__|$GUARD|g" \
             -e "s|__GUARD_HOME__|$GUARD_HOME|g" \
             "$SRC_DIR/service/linux/guard.service" > "$unit"
         systemctl --user daemon-reload

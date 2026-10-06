@@ -101,7 +101,7 @@ def cmd_triage(args: list[str]) -> int:
         tmp.chmod(tmp.stat().st_mode | stat.S_IEXEC)
         return subprocess.call(["bash", str(tmp)] + args)
     if plat.startswith("win"):
-        print("On Windows, host triage uses the Sysmon-based sensor + IR scripts.")
+        print("On Windows, host triage uses the Sysmon-based sensor (`guard sensor`) + IR scripts.")
         print("Run:  guard-triage.ps1 / reboot-forensics.ps1 (bundled under windows/),")
         print("and install Sysmon with windows/sysmon-config.xml. See windows/README-windows-sensor.md.")
         return 0

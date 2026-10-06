@@ -13,6 +13,7 @@ mod permissions;
 mod pyjson;
 mod pyrepr;
 mod scan;
+mod sensor;
 mod telemetry;
 mod update;
 mod util;
@@ -46,7 +47,7 @@ Commands in this build:
   guard permissions        check disk access; on macOS raise the \"Allow\" prompts (internal + removable)
   guard notify-test        show a sample threat popup (verify desktop alerts work)
   guard deps update        refresh the malware-package blocklist from GitHub advisories
-  guard deps check <path>  check a project's dependencies against the malware blocklist
+  guard deps check <path>  check a project's dependencies against the malware blocklist [--blocklist FILE]
   guard install            install Guard as an auto-start service on this machine
   guard uninstall          remove the Guard service + hooks
   guard telemetry          send one telemetry report now
@@ -56,6 +57,7 @@ Commands in this build:
   guard av scan <path>     antivirus engine: hash DB + YARA-style rules + heuristics + archives
   guard av quarantine ...  list / restore / delete items in the neutered quarantine vault
   guard watch              start the always-on filesystem watcher (the service runs this)
+  guard sensor             Windows sensor: Sysmon + reboot events -> alerts (--selftest runs anywhere)
 ";
 
 fn report(r: Result<u8, String>) -> u8 {
@@ -68,7 +70,9 @@ fn report(r: Result<u8, String>) -> u8 {
 /// Run the bundled triage script (Linux/macOS) the way guard.py does.
 fn triage(args: &[String]) -> u8 {
     if cfg!(windows) {
-        println!("On Windows, host triage uses the Sysmon-based sensor + IR scripts.");
+        println!(
+            "On Windows, host triage uses the Sysmon-based sensor (`guard sensor`) + IR scripts."
+        );
         println!("Run:  guard-triage.ps1 / reboot-forensics.ps1 (bundled under windows/),");
         println!("and install Sysmon with windows/sysmon-config.xml. See windows/README-windows-sensor.md.");
         return 0;
@@ -191,6 +195,7 @@ fn run(args: &[String]) -> u8 {
             }
         },
         "watch" => watch::main(rest),
+        "sensor" => sensor::main(rest),
         "install" => report(install::run(false)),
         "uninstall" => report(install::run(true)),
         c => {

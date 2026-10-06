@@ -1,0 +1,15 @@
+[package]
+name = "sign-manifest"
+version = "1.0.0"
+edition = "2021"
+description = "Release-side signing for Guard OTA updates (never ships in the guard binary)"
+license = "MIT"
+publish = false
+
+[dependencies]
+base64 = "0.23.1"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+getrandom = "0.3"
+# no preserve_order: objects keep sorted keys, as json.dumps(sort_keys=True) did
+serde_json = "1.0.151"
+sha2 = "0.10"

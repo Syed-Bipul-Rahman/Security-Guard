@@ -22,6 +22,7 @@ on:
       - "core/**"
       - "cli/**"
       - "build/**"
+      - "release/**"
       - ".github/workflows/release.yml"
 
 permissions:
@@ -142,7 +143,8 @@ jobs:
         run: |
           # the Python reference needs guard_core for YARA and native file events
           python -m pip install --quiet -r requirements-dev.txt ./core
-          python -m pytest tests/test_rust_binary.py tests/test_rust_commands.py tests/test_rust_av.py tests/test_rust_scan.py tests/test_rust_watch.py --no-cov -p no:cacheprovider -q
+          cargo build --locked --manifest-path release/Cargo.toml
+          python -m pytest tests/test_rust_binary.py tests/test_rust_commands.py tests/test_rust_av.py tests/test_rust_scan.py tests/test_rust_watch.py tests/test_rust_tools.py --no-cov -p no:cacheprovider -q
 
       - name: Name artifact
         id: name
@@ -202,8 +204,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Resolve version
         id: v
@@ -221,7 +222,7 @@ jobs:
           # Ship the committed blocklist snapshot — fast. Agents refresh it themselves
           # via OTA `guard deps update`, so the release doesn't do a slow full fetch.
           cp malware-feed/malware-blocklist.json artifacts/malware-blocklist.json
-          echo "blocklist names: $(python3 -c 'import json;print(sum(len(v) for v in json.load(open("malware-feed/malware-blocklist.json")).values()))')"
+          echo "blocklist names: $(jq '[.[] | length] | add' malware-feed/malware-blocklist.json)"
 
       - name: Restore signing key
         env:
@@ -238,7 +239,8 @@ jobs:
             BINS="$BINS --binary $plat=$f"
           done
           echo "signing binaries:$BINS"
-          python3 release/sign_manifest.py build-and-sign \
+          cargo build --release --locked --manifest-path release/Cargo.toml
+          release/target/release/sign-manifest build-and-sign \
             --version "${{ steps.v.outputs.version }}" \
             --key /tmp/guard-update.key \
             --base-url "${{ secrets.GUARD_UPDATE_URL }}" \

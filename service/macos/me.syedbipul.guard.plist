@@ -12,8 +12,8 @@
      before login. Use for a machine-wide component.
 
   RunAtLoad + KeepAlive => starts at login/boot and restarts on crash, so it keeps
-  working across restart and shutdown. Replace __GUARD_APP__ and __PYTHON__ at
-  install time (install.sh does this).
+  working across restart and shutdown. Replace __GUARD_BIN__ and __GUARD_HOME__
+  at install time (install.sh does this).
 -->
 <plist version="1.0">
 <dict>
@@ -22,16 +22,14 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>__PYTHON__</string>
-        <string>__GUARD_APP__/watcher.py</string>
+        <string>__GUARD_BIN__</string>
+        <string>watch</string>
     </array>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>GUARD_HOME</key>
         <string>__GUARD_HOME__</string>
-        <key>GUARD_APP</key>
-        <string>__GUARD_APP__</string>
     </dict>
 
     <key>RunAtLoad</key>

@@ -18,7 +18,7 @@ setup once; after that, shipping is a single `git tag`.
 
 ### 1a. Generate the signing keypair (do this on a trusted machine, once)
 ```bash
-python3 release/sign_manifest.py keygen --out guard-update.key
+cargo run --release --manifest-path release/Cargo.toml -- keygen --out guard-update.key
 ```
 This prints:
 - a **PUBLIC key (hex)** — goes into the repo + the binary
