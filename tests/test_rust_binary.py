@@ -56,7 +56,7 @@ def test_help_and_unknown(rust_guard):
 
 
 def test_unported_commands_say_so(rust_guard):
-    r = run_rust(rust_guard, "scan", ".")
+    r = run_rust(rust_guard, "watch")
     assert r.returncode == 2 and b"not in the Rust build yet" in r.stderr
 
 
