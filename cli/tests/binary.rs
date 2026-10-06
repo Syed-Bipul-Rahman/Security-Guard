@@ -418,7 +418,12 @@ fn version() {
     );
     let pkg = env!("CARGO_PKG_VERSION");
     match std::env::var("GUARD_VERSION") {
-        Ok(v) if !v.is_empty() => assert_eq!(cur, v),
+        // the reference build reports its own VERSION, not the release one
+        Ok(v) if !v.is_empty() => {
+            if reference().is_none() {
+                assert_eq!(cur, v)
+            }
+        }
         _ => {
             // a release build rewrites guard.py's VERSION (and bakes GUARD_VERSION in)
             assert_eq!(cur, pkg);
