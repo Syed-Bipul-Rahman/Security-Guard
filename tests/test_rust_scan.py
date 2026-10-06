@@ -441,10 +441,13 @@ def test_clean_relative_and_restore_cross(tmp_path, rust_guard):
     """Each build restores from the backups the other one made."""
     two_copies(tmp_path, infected_repo)
     same_each(tmp_path, *run_each(tmp_path, rust_guard, "clean", cwd_name=""))
-    shutil.copytree(tmp_path / "home-py", tmp_path / "home-tmp")
-    shutil.rmtree(tmp_path / "home-py")
-    shutil.move(tmp_path / "home-rs", tmp_path / "home-py")
-    shutil.move(tmp_path / "home-tmp", tmp_path / "home-rs")
+    # swap the indexes only: their backup paths are absolute and must still point
+    # at the files each build wrote (swapping the homes matched only when both
+    # cleans ran in the same second, as backup names carry the time)
+    idx = {who: tmp_path / f"home-{who}" / "quarantine" / "index.jsonl" for who in ("py", "rs")}
+    data = {who: f.read_bytes() for who, f in idx.items()}
+    idx["py"].write_bytes(data["rs"])
+    idx["rs"].write_bytes(data["py"])
     # on POSIX the payload is cut through server-link.ts, a link to src/server.ts
     for target in ("src/server.ts", "server-link.ts", "public/fonts/fa-solid-400.woff2", ".vscode/tasks.json", "nope"):
         py, rs = run_each(tmp_path, rust_guard, "restore", str(Path(target)), cwd_name="")
