@@ -138,9 +138,13 @@ with `guard av scan --fail-on-suspicious` also a suspicious one), `2` usage/erro
   It does not block the git command and it does not edit the tree (the watcher
   still does the cleanup).
 - `pre-push` scans the **commits being pushed** (hook stdin: added lines in that
-  range, plus the blobs those commits introduce). A critical finding exits
-  non-zero, so `git push` stops, and prints how to bypass. The worktree is not
-  what gets scanned, and nothing in it is rewritten.
+  range, plus the blobs those commits introduce). A new branch scans only
+  commits that are not already on a remote-tracking ref, so a new name for
+  history that is already published is allowed. A repository with no remotes
+  still scans the whole history. A critical finding exits non-zero, so
+  `git push` stops, and prints how to bypass. The worktree is not what gets
+  scanned, and nothing in it is rewritten. Deletes are ignored for both SHA-1
+  and SHA-256 (40 or 64 zero digits).
 
 ```bash
 GUARD_HOOK_BYPASS=1 git push     # skip Guard, still run your own chained hook

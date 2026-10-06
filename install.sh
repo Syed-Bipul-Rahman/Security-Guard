@@ -6,7 +6,8 @@
 #     clone/pull is scanned, and a push with a critical finding is refused
 #   * installs + starts the always-on watcher service (launchd / systemd)
 #
-# Run this ON EACH developer machine. It is idempotent. Detect+report only.
+# Run this ON EACH developer machine. It is idempotent.
+# pre-push blocks a critical finding. The other hooks detect and report only.
 # Uninstall with:  ./install.sh --uninstall
 #
 # This does NOT need root for the per-user install (recommended). A machine-wide
@@ -95,7 +96,10 @@ echo "    app -> $GUARD_APP"
 install_hook_scripts "$HOOKS_DIR"
 existing="$(git config --global --get core.hooksPath || true)"
 if [ -z "$existing" ] || [ "$existing" = "$HOOKS_DIR" ]; then
-    rm -f "$GUARD_HOME/chained-hooks-path"
+    # A previous install may have chained into someone else's directory and
+    # recorded it. Deleting that record without restoring their scripts leaves
+    # Guard's copies in place and uninstall can no longer put theirs back.
+    restore_chained_hooks
     git config --global core.hooksPath "$HOOKS_DIR"
     echo "    global git hooks -> $HOOKS_DIR (post-checkout/merge/rewrite/pre-push)"
 elif [ -d "$existing" ]; then

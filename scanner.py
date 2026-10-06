@@ -224,8 +224,11 @@ class GuardScanner:
         """Scan the commits named by git's pre-push stdin.
 
         Each line is ``local_ref local_sha remote_ref remote_sha``. A delete
-        (local sha all zeros) is skipped. A new remote ref (remote sha all
-        zeros) scans that commit and its history; an update scans
+        (local sha all zeros, 40 for SHA-1 or 64 for SHA-256) is skipped. A
+        new remote ref scans only commits that are not already reachable from
+        a remote-tracking ref, so publishing a new branch name for history
+        that is already on a remote is not blocked. A repository with no
+        remotes still scans the whole history (a first push). An update scans
         ``remote_sha..local_sha`` and the blobs that update introduces.
         The working tree is not consulted, so a dirty checkout cannot hide a
         payload that is actually being pushed.
@@ -237,7 +240,7 @@ class GuardScanner:
             if len(parts) < 4:
                 continue
             _local_ref, local_sha, _remote_ref, remote_sha = parts[:4]
-            if local_sha == _ZERO_SHA:
+            if _is_zero_sha(local_sha):
                 continue
             out["updates"] += 1
             try:
@@ -250,9 +253,21 @@ class GuardScanner:
         return out
 
     def _scan_push_update(self, repo: Path, local_sha: str, remote_sha: str, out: dict) -> None:
-        if remote_sha == _ZERO_SHA:
-            names = _git_out(repo, ["ls-tree", "-r", "--name-only", "-z", local_sha])
-            patch = _git_out(repo, ["log", "-p", "--no-color", local_sha])
+        if _is_zero_sha(remote_sha):
+            # Commits already on any remote have been published. Scanning them
+            # again blocks a new branch of a clean (or already-reviewed) history,
+            # including this repo's own testdata fixtures.
+            revs = _git_out(repo, ["rev-list", local_sha, "--not", "--remotes"]).split()
+            if not revs:
+                return
+            patch = _git_out(repo, ["log", "-p", "--no-color", local_sha, "--not", "--remotes"])
+            oldest = revs[-1]
+            parents = _git_out(repo, ["log", "-1", "--format=%P", oldest]).split()
+            if parents:
+                names = _git_out(repo, ["diff", "--name-only", "--diff-filter=ACMRT", "-z",
+                                        parents[0], local_sha])
+            else:
+                names = _git_out(repo, ["ls-tree", "-r", "--name-only", "-z", local_sha])
         else:
             names = _git_out(repo, ["diff", "--name-only", "--diff-filter=ACMRT", "-z",
                                     remote_sha, local_sha])
@@ -291,7 +306,9 @@ class GuardScanner:
         return False
 
 
-_ZERO_SHA = "0" * 40
+def _is_zero_sha(sha: str) -> bool:
+    """Git's null object id: 40 zeros on SHA-1, 64 zeros on SHA-256."""
+    return bool(sha) and sha.strip("0") == ""
 
 
 def _git_out(repo: Path, args: list[str]) -> str:

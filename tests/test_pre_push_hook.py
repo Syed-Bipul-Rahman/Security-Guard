@@ -148,6 +148,41 @@ def test_scan_push_skips_unreadable_blob(tmp_path, monkeypatch):
     assert out["updates"] == 1 and not out["infected"] and out["findings"] == []
 
 
+def test_zero_sha_accepts_sha1_and_sha256_nulls():
+    assert S._is_zero_sha("0" * 40)
+    assert S._is_zero_sha("0" * 64)
+    assert not S._is_zero_sha("")
+    assert not S._is_zero_sha("a" * 40)
+    assert not S._is_zero_sha("0" * 39 + "a")
+
+
+def test_sha256_null_is_not_a_failed_diff(tmp_path):
+    repo = init_repo(tmp_path / "repo")
+    sha = commit(repo, "bad.js", "eval(proxyInfo)\n", "bad")
+    z64 = "0" * 64
+    sc = S.GuardScanner(S.load_signatures())
+    new_ref = sc.scan_push(repo, f"refs/heads/main {sha} refs/heads/main {z64}\n")
+    assert new_ref["infected"] and new_ref["error"] is None
+    deleted = sc.scan_push(repo, f"refs/heads/main {z64} refs/heads/main {sha}\n")
+    assert deleted["updates"] == 0 and not deleted["infected"] and deleted["error"] is None
+
+
+def test_new_branch_already_published_is_not_blocked(tmp_path):
+    repo = init_repo(tmp_path / "repo")
+    published = commit(repo, "bad.js", "eval(proxyInfo)\n", "already pushed")
+    git(repo, "update-ref", "refs/remotes/origin/main", published)
+    sc = S.GuardScanner(S.load_signatures())
+    again = sc.scan_push(repo, f"refs/heads/feature {published} refs/heads/feature {ZERO}\n")
+    assert again["updates"] == 1 and not again["infected"]
+    assert again["findings"] == [] and again["error"] is None
+
+    fresh = commit(repo, "more.js", "eval(proxyInfo)\n", "new")
+    introduced = sc.scan_push(repo, f"refs/heads/feature {fresh} refs/heads/feature {ZERO}\n")
+    assert introduced["infected"] and introduced["error"] is None
+    locs = {x.get("path") or x.get("where") for x in introduced["findings"]}
+    assert "more.js" in locs and "bad.js" not in locs
+
+
 def test_print_push_variants(capsys):
     S._print_push({"repo": "r", "error": "boom", "infected": True, "findings": [
         {"severity": "critical", "path": "a.js", "sig_id": "s", "reason": "why"},
@@ -282,6 +317,81 @@ def test_post_checkout_reports_and_exits_zero(tmp_path):
     assert marker.read_text() == "1"
 
 
+def test_reexec_does_not_recurse(tmp_path):
+    repo = init_repo(tmp_path / "repo")
+    sha = commit(repo, "ok.js", "console.log(1)\n", "clean")
+    hook = place_hook(tmp_path / "hooks" / "pre-push")
+    user = tmp_path / "hooks" / "pre-push.guard-user"
+    user.write_text("#!/bin/sh\nexec \"$GUARD_REEXEC\" \"$@\"\n", encoding="utf-8")
+    user.chmod(0o755)
+    env = hook_env(tmp_path, repo)
+    env["GUARD_REEXEC"] = str(hook)
+    proc = subprocess.run(
+        [str(hook)], cwd=str(repo), env=env,
+        input=f"refs/heads/main {sha} refs/heads/main {ZERO}\n",
+        capture_output=True, text=True, timeout=5,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "RESULT: clean" in proc.stdout
+
+
+def test_pre_push_blocks_when_stdin_cannot_be_captured(tmp_path):
+    repo = init_repo(tmp_path / "repo")
+    hook = place_hook(tmp_path / "hooks" / "pre-push")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name in ("cat", "mktemp"):
+        tool = bindir / name
+        tool.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        tool.chmod(0o755)
+    env = hook_env(tmp_path, repo)
+    env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
+    proc = run_hook(hook, repo, env, stdin="refs/heads/main a b c\n")
+    assert proc.returncode == 1
+    assert "Could not read" in proc.stderr
+
+
+def test_other_hooks_continue_when_stdin_cannot_be_captured(tmp_path):
+    repo = init_repo(tmp_path / "repo")
+    commit(repo, "ok.js", "console.log(1)\n", "clean")
+    hook = place_hook(tmp_path / "hooks" / "post-checkout")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name in ("cat", "mktemp"):
+        tool = bindir / name
+        tool.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        tool.chmod(0o755)
+    env = hook_env(tmp_path, repo)
+    env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
+    proc = run_hook(hook, repo, env, args=("old", "new", "1"))
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_pre_push_in_bare_repo_is_scanned(tmp_path):
+    src = init_repo(tmp_path / "src")
+    sha = commit(src, "bad.js", "eval(proxyInfo)\n", "bad")
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=True)
+    git(src, "remote", "add", "origin", str(bare))
+    subprocess.run(["git", "-C", str(src), "push", "origin", "HEAD:refs/heads/main"],
+                   check=True, capture_output=True)
+    hook = place_hook(tmp_path / "hooks" / "pre-push")
+    env = hook_env(tmp_path, bare)
+    proc = run_hook(hook, bare, env, stdin=f"refs/heads/feature {sha} refs/heads/feature {ZERO}\n")
+    assert proc.returncode == 1, proc.stderr + proc.stdout
+    assert "Push blocked" in proc.stderr
+
+
+def test_pre_push_repo_path_with_spaces(tmp_path):
+    repo = init_repo(tmp_path / "my repo")
+    sha = commit(repo, "ok.js", "console.log(1)\n", "clean")
+    hook = place_hook(tmp_path / "hook dir" / "pre-push")
+    env = hook_env(tmp_path, repo)
+    proc = run_hook(hook, repo, env, stdin=f"refs/heads/main {sha} refs/heads/main {ZERO}\n")
+    assert proc.returncode == 0, proc.stderr
+    assert "RESULT: clean" in proc.stdout
+
+
 def test_hook_outside_a_repo_exits_zero(tmp_path):
     hook = place_hook(tmp_path / "pre-push")
     env = hook_env(tmp_path, tmp_path)
@@ -384,6 +494,30 @@ def test_install_leaves_nondirectory_hooks_path(tmp_path):
     assert "not a directory" in proc.stdout
     assert _git_config(env, "--get", "core.hooksPath").stdout.strip() == str(tmp_path / "not-a-dir")
     assert (guard / "githooks" / "pre-push").is_file()
+
+
+def test_reinstall_restores_foreign_hooks_when_hooks_path_is_cleared(tmp_path):
+    env, guard = _install_env(tmp_path)
+    foreign = tmp_path / "their hooks"
+    foreign.mkdir()
+    original = foreign / "pre-push"
+    original.write_text("#!/bin/sh\necho user-hook\n", encoding="utf-8")
+    original.chmod(0o755)
+    assert _git_config(env, "core.hooksPath", str(foreign)).returncode == 0
+
+    chained = subprocess.run(["bash", str(INSTALL)], capture_output=True, text=True, env=env)
+    assert chained.returncode == 0, chained.stderr
+    assert (foreign / "pre-push.guard-user").is_file()
+    assert "GUARD_SCAN_HOOK" in (foreign / "post-checkout").read_text(encoding="utf-8")
+
+    assert _git_config(env, "--unset", "core.hooksPath").returncode == 0
+    again = subprocess.run(["bash", str(INSTALL)], capture_output=True, text=True, env=env)
+    assert again.returncode == 0, again.stderr + again.stdout
+    assert (foreign / "pre-push").read_text(encoding="utf-8") == "#!/bin/sh\necho user-hook\n"
+    assert not (foreign / "pre-push.guard-user").exists()
+    assert not (foreign / "post-checkout").exists()
+    assert not (guard / "chained-hooks-path").exists()
+    assert _git_config(env, "--get", "core.hooksPath").stdout.strip() == str(guard / "githooks")
 
 
 def test_install_refreshes_when_hooks_path_is_already_ours(tmp_path):

@@ -22,16 +22,30 @@
 
 set -u
 
+# Internal. A chained hook that execs this script again must not loop: the
+# outer invocation already scanned, so the nested one returns immediately.
+if [ "${GUARD_HOOK_ACTIVE:-}" = "1" ]; then
+    exit 0
+fi
+export GUARD_HOOK_ACTIVE=1
+
 GUARD_HOME="${GUARD_HOME:-$HOME/.guard}"
 GUARD_APP="${GUARD_APP:-$GUARD_HOME/app}"
 PYTHON="${GUARD_PYTHON:-python3}"
 
 mkdir -p "$GUARD_HOME" 2>/dev/null || true
+hook_name=${0##*/}
 stdin_file=$(mktemp 2>/dev/null || printf '%s' "$GUARD_HOME/hook-stdin.$$")
-cat > "$stdin_file" || true
 trap 'rm -f "$stdin_file"' EXIT INT TERM
-
-hook_name=$(basename "$0")
+if ! cat > "$stdin_file"; then
+    # An empty stdin would look like "nothing to push" and allow it. Fail closed
+    # on pre-push. The other hooks only report, so a capture failure must not
+    # block checkout or merge.
+    if [ "$hook_name" = "pre-push" ]; then
+        printf '[GUARD] Push blocked. Could not read the commits being pushed.\n' >&2
+        exit 1
+    fi
+fi
 log="$GUARD_HOME/hook.log"
 
 run_chained_hooks() {
@@ -58,7 +72,16 @@ run_chained_hooks() {
     return 0
 }
 
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+if ! REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
+    # Bare repos have no work tree. show-toplevel fails there; still scan the
+    # push instead of allowing it through.
+    bare=$(git rev-parse --is-bare-repository 2>/dev/null || printf '%s' false)
+    if [ "$bare" = "true" ]; then
+        REPO_ROOT=$(pwd)
+    else
+        exit 0
+    fi
+fi
 echo "$(date -u +%FT%TZ)  $hook_name  $REPO_ROOT" >> "$log" 2>/dev/null || true
 
 if [ "${GUARD_HOOK_BYPASS:-}" = "1" ] || [ ! -f "$GUARD_APP/scanner.py" ]; then
