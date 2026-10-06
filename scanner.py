@@ -122,8 +122,9 @@ class GuardScanner:
         seen = 0
         aborted = False
         for dirpath, dirnames, filenames in os.walk(repo):
-            dirnames[:] = [d for d in dirnames if d not in skip_names]  # prune
-            for fn in filenames:
+            # sorted, so the report reads the same on every machine and file system
+            dirnames[:] = sorted(d for d in dirnames if d not in skip_names)  # prune
+            for fn in sorted(filenames):
                 path = Path(dirpath) / fn
                 try:
                     rel = path.relative_to(repo).as_posix()

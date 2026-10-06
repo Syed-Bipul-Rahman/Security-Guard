@@ -71,7 +71,8 @@ fn critical(v: &Value) -> bool {
 }
 
 /// Directory entries the way os.walk splits them: (dirs, files), with links
-/// to directories counted as directories. None when the listing fails.
+/// to directories counted as directories, each sorted by name. None when the
+/// listing fails.
 fn listdir(dir: &Path) -> Option<(Vec<String>, Vec<String>)> {
     let (mut dirs, mut files) = (vec![], vec![]);
     for e in fs::read_dir(dir).ok()? {
@@ -88,6 +89,9 @@ fn listdir(dir: &Path) -> Option<(Vec<String>, Vec<String>)> {
             files.push(name);
         }
     }
+    // sorted, so the report reads the same on every machine and file system
+    dirs.sort();
+    files.sort();
     Some((dirs, files))
 }
 
