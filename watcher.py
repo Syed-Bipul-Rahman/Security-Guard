@@ -618,7 +618,8 @@ class Watcher:
             if len(batch) >= self.batch_size:
                 flush()
 
-        for raw in paths:
+        # A burst reports a path several times (create, write, close); scan it once.
+        for raw in dict.fromkeys(paths):
             p = Path(raw)
             try:
                 st = p.stat()

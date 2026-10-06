@@ -52,6 +52,15 @@ def test_new_file_is_scanned_once(make):
     assert w.handle_native([str(f)]) == 0
 
 
+def test_burst_scans_a_path_once(make):
+    """A burst reports one file several times (create, write, close)."""
+    w, root = make()
+    w.poll_once(prime=True)
+    f = touch(root / "Downloads" / "a.js")
+    assert w.handle_native([str(f)] * 3) == 1
+    assert w.scanned == [("file", str(f))]
+
+
 def test_modified_file_is_rescanned(make):
     w, root = make()
     f = touch(root / "a.js")

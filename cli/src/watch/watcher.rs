@@ -901,7 +901,12 @@ impl Watcher {
         let mut is_dir: HashSet<String> = HashSet::new();
         let mut work = Work::default();
         let mut err: Option<String> = None;
+        // a burst reports a path several times (create, write, close); scan it once
+        let mut seen = HashSet::new();
         for p in paths {
+            if !seen.insert(p.clone()) {
+                continue;
+            }
             let Ok(md) = fs::metadata(&p) else {
                 continue; // already gone
             };
