@@ -336,4 +336,38 @@ mod tests {
         assert_eq!(snippet("é".repeat(45).as_str(), "é"), "é".repeat(41));
         assert_eq!(snippet("abc", "zz"), "");
     }
+
+    fn ids(f: &[Finding]) -> Vec<&str> {
+        let mut v: Vec<&str> = f.iter().map(|x| x.sig_id.as_str()).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// test_legacy_engines.py TestFingerprintMatcher: names alone, pruned
+    /// directories, diffs judged on added lines only.
+    #[test]
+    fn names_skips_and_diffs() {
+        let m = Matcher::new(&super::super::sigs::load(None).unwrap()).unwrap();
+        let eval = concat!("eval(proxy", "Info)");
+        assert!(m.scan_content("a/node_modules/x/eval.js", eval).is_empty());
+        assert_eq!(
+            ids(&m.scan_content("public/fonts/fa-solid-400.woff2", "")),
+            ["drop.file.name"]
+        );
+        assert_eq!(
+            ids(&m.scan_content(".github/workflows/ci.yml", "on: push")),
+            ["wf.name"]
+        );
+        let atob = concat!("atob(process.env.", "AUTH_API_KEY)");
+        let diff = format!(
+            "diff --git a/x b/x\n+++ b/.github/workflows/evil.yml\n-{eval}\n+const a = 1;\n+{atob}\n"
+        );
+        let found = m.scan_diff(&diff);
+        let got = ids(&found);
+        assert!(
+            got.contains(&"iife.marker.atob") && got.contains(&"wf.added"),
+            "{got:?}"
+        );
+        assert!(!got.contains(&"iife.marker.eval"), "{got:?}");
+    }
 }

@@ -1248,3 +1248,139 @@ fn install_signal_handlers() {
 
 #[cfg(not(any(unix, windows)))]
 fn install_signal_handlers() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A watcher over <tmp>/root (max_depth 3, no repo debounce) with its
+    /// home beside it, as test_watcher_native.py's fixture builds it.
+    fn make(name: &str) -> (Watcher, PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("guard-native-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("root")).unwrap();
+        let base = resolve(&base);
+        let root = base.join("root");
+        let mut cfg = super::super::default_config();
+        cfg.insert("watch_roots".into(), json!([root.to_string_lossy()]));
+        cfg.insert("notify".into(), json!(false));
+        cfg.insert("max_depth".into(), json!(3));
+        cfg.insert("repo_debounce_sec".into(), json!(0));
+        let w = Watcher::new(cfg, base.join("home")).unwrap();
+        (w, root, base)
+    }
+
+    fn touch(p: &Path) -> PathBuf {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, b"x").unwrap();
+        p.to_path_buf()
+    }
+
+    fn done(mut w: Watcher, base: &Path) {
+        w.store.close();
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn new_and_repeated_events() {
+        let (mut w, root, base) = make("new");
+        w.poll_once(true).unwrap();
+        let f = touch(&root.join("Downloads/a.js"));
+        assert_eq!(w.handle_native(vec![f.clone()]).unwrap(), 1);
+        // a repeat event with no newer mtime is not new work
+        assert_eq!(w.handle_native(vec![f.clone()]).unwrap(), 0);
+        // a burst reports one file several times: scanned once
+        let g = touch(&root.join("Downloads/b.js"));
+        assert_eq!(w.handle_native(vec![g.clone(), g.clone(), g]).unwrap(), 1);
+        // deleted before we looked
+        assert_eq!(w.handle_native(vec![root.join("gone.js")]).unwrap(), 0);
+        // a full pass after native events finds nothing new
+        assert_eq!(w.poll_once(false).unwrap(), 0);
+        done(w, &base);
+    }
+
+    #[test]
+    fn modified_file_is_rescanned() {
+        let (mut w, root, base) = make("modified");
+        let f = touch(&root.join("a.js"));
+        w.poll_once(true).unwrap();
+        let later = fs::metadata(&f).unwrap().modified().unwrap() + Duration::from_secs(10);
+        fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert_eq!(w.handle_native(vec![f]).unwrap(), 1);
+        done(w, &base);
+    }
+
+    /// A clone or a folder moved in raises one event for its top directory;
+    /// what is inside must still be found.
+    #[test]
+    fn directory_moved_in_is_walked() {
+        let (mut w, root, base) = make("moved");
+        w.poll_once(true).unwrap();
+        let src = base.join("elsewhere/proj");
+        fs::create_dir_all(src.join(".git")).unwrap();
+        fs::write(src.join(".git/HEAD"), b"ref: refs/heads/main\n").unwrap();
+        touch(&src.join("src/index.js"));
+        let proj = root.join("proj");
+        fs::rename(&src, &proj).unwrap();
+        assert_eq!(w.handle_native(vec![proj.clone()]).unwrap(), 1);
+        let log = fs::read_to_string(w.home.join("watcher.log")).unwrap();
+        assert!(
+            log.contains(&format!("scan trigger: {}", proj.display())),
+            "{log}"
+        );
+        done(w, &base);
+    }
+
+    /// in_scope() agrees with the polling walk on excludes and depth, and
+    /// never admits the guard home, other trees or the root itself.
+    #[test]
+    fn scope_matches_polling_walk() {
+        let (mut w, root, base) = make("scope");
+        for rel in [
+            "a.js",
+            "d1/b.js",
+            "d1/d2/c.js",
+            "d1/d2/d3/d.js",
+            "d1/d2/d3/d4/e.js",
+            "node_modules/x.js",
+            "d1/node_modules/y.js",
+            "d1/build",
+            ".git/HEAD",
+        ] {
+            touch(&root.join(rel));
+        }
+        let mut walked = HashSet::new();
+        w.iter_paths(&root.clone(), None, &mut |_, p, _, _| {
+            walked.insert(p);
+        });
+        fn every(d: &Path, out: &mut Vec<PathBuf>) {
+            for e in fs::read_dir(d).unwrap().flatten() {
+                out.push(e.path());
+                if e.path().is_dir() {
+                    every(&e.path(), out);
+                }
+            }
+        }
+        let mut all = vec![];
+        every(&root, &mut all);
+        let scoped: HashSet<String> = all
+            .iter()
+            .filter(|p| w.in_scope(p, p.is_dir()).is_some())
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(scoped, walked);
+        // a *file* named like an excluded directory
+        assert!(scoped.contains(&root.join("d1/build").to_string_lossy().into_owned()));
+        assert!(w
+            .in_scope(&w.home_real.join("watcher.log"), false)
+            .is_none());
+        assert!(w.in_scope(&base.join("other/a.js"), false).is_none());
+        assert!(w.in_scope(&root, true).is_none());
+        done(w, &base);
+    }
+}

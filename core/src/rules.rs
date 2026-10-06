@@ -364,4 +364,65 @@ mod tests {
         assert!(RuleSet::from_json(r#"[{"id":"x","strings":{"$a":{"hex":"4G"}},"condition":"$a"}]"#).is_err());
         assert!(RuleSet::from_json(r#"[{"id":"x","condition":"$nope"}]"#).is_err());
     }
+
+    // ---- test_av_rules.py
+    fn hits(r: &RuleSet, data: &[u8]) -> bool {
+        !r.scan(data, &[0], data.len() as i64, 64).is_empty()
+    }
+
+    #[test]
+    fn hex_semantics() {
+        let h = |spec: &str| rs(&format!(r#"[{{"id":"h","strings":{{"$a":{{"hex":"{spec}"}}}},"condition":"$a"}}]"#));
+        for (spec, data, want) in [("4D 5A", &b"MZ"[..], true), ("4d5a", b"xMZ", true), ("4D ?? 5A", b"M\x00Z", true),
+                                    ("4D [2-3] 5A", b"M..Z", true), ("4D [2-3] 5A", b"M.Z", false), ("4D [2] 5A", b"M..Z", true),
+                                    ("(41|42) 43", b"BC", true), ("(41|42) 43", b"CC", false), ("2E", b"x", false)] {
+            assert_eq!(hits(&h(spec), data), want, "{spec}");
+        }
+        for bad in ["41 | 42", "41 )", "(41", "41 [2-", "41 [x] 42", "41 [5-2] 42", "4G", "4", ""] {
+            assert!(RuleSet::from_json(&format!(r#"[{{"id":"h","strings":{{"$a":{{"hex":"{bad}"}}}},"condition":"$a"}}]"#)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn regex_flags_and_text_forms() {
+        let one = |spec: &str| rs(&format!(r#"[{{"id":"r","strings":{{"$r":{spec}}},"condition":"$r"}}]"#));
+        assert!(hits(&one(r#"{"regex":"^b","multiline":true}"#), b"a\nb"));
+        assert!(!hits(&one(r#"{"regex":"^b"}"#), b"a\nb"));
+        assert!(!hits(&one(r#"{"regex":"a.b"}"#), b"a\nb"));
+        assert!(hits(&one(r#"{"regex":"a.b","dotall":true}"#), b"a\nb"));
+        assert!(hits(&one(r#"{"text":"Eval","nocase":true}"#), b"EVAL"));
+        let both = one(r#"{"text":"hi","wide":true}"#);
+        assert!(hits(&both, b"h\x00i\x00") && hits(&both, b"hi"));
+        assert!(RuleSet::from_json(r#"[{"id":"r","strings":{"$r":{"text":"x","ascii":false}},"condition":"$r"}]"#).is_err());
+        assert!(RuleSet::from_json(r#"[{"id":"r","strings":{"$r":{"regex":"("}},"condition":"$r"}]"#).is_err());
+    }
+
+    #[test]
+    fn operators_and_true_file_size() {
+        let r = rs(r#"[{"id":"big","condition":{"filesize_min":3}}]"#);
+        assert!(hits(&r, b"abcd") && !hits(&r, b"ab"));
+        // the size of the whole file, not of the prefix that was read
+        assert_eq!(r.scan(b"ab", &[0], 10, 64).len(), 1);
+        let defs = r#""strings":{"$a":{"text":"a"},"$b":{"text":"b"},"$c1":{"text":"c1"},"$c2":{"text":"c2"}}"#;
+        let ev = |cond: &str, data: &[u8]| hits(&rs(&format!(r#"[{{"id":"x",{defs},"condition":{cond}}}]"#)), data);
+        let data = b"a....a.c1"; // $a at 0 and 5, $c1 once, no $b / $c2
+        assert!(ev(r#""$a""#, data) && !ev(r#""$b""#, data));
+        assert!(!ev(r#"{"all":"them"}"#, data) && ev(r#"{"all":["$a","$c1"]}"#, data));
+        assert!(ev(r#"{"any":"them"}"#, data) && !ev(r#"{"any":["$b","$c2"]}"#, data));
+        assert!(ev(r#"{"at_least":2,"of":"them"}"#, data) && !ev(r#"{"at_least":2,"of":["$c*"]}"#, data));
+        assert!(ev(r#"{"all":"$a"}"#, data) && !ev(r#"{"any":"$b"}"#, data));
+        assert!(ev(r#"{"or":["$b","$a"]}"#, data) && !ev(r#"{"or":["$b"]}"#, data));
+        assert!(ev(r#"{"at":"$a","offset":5}"#, data) && !ev(r#"{"at":"$a","offset":1}"#, data));
+        assert!(ev(r#"{"count":"$a","min":2}"#, data) && !ev(r#"{"count":"$a","min":3}"#, data));
+        assert!(ev(r#"{"filesize_max":9}"#, data) && !ev(r#"{"filesize_max":8}"#, data));
+        assert!(ev(r#"{"filesize_min":9}"#, data) && !ev(r#"{"filesize_min":10}"#, data));
+        // no strings, no quorum
+        assert!(!hits(&rs(r#"[{"id":"q","condition":{"at_least":1,"of":"them"}}]"#), b"x"));
+        // the per-string match cap bounds count
+        let cap = rs(r#"[{"id":"c","strings":{"$a":{"text":"abc"}},"condition":{"count":"$a","min":3}}]"#);
+        assert_eq!(cap.scan(&b"abc".repeat(10), &[0], 30, 3).len(), 1);
+        let cap4 = rs(r#"[{"id":"c","strings":{"$a":{"text":"abc"}},"condition":{"count":"$a","min":4}}]"#);
+        assert!(cap4.scan(&b"abc".repeat(10), &[0], 30, 3).is_empty());
+    }
 }
+

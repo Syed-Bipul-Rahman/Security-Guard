@@ -135,3 +135,77 @@ impl HashDatabase {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::av::hashing::hash_bytes;
+
+    /// test_av_core.py TestHashDatabase.
+    #[test]
+    fn digests_and_lookup_order() {
+        assert_eq!(algo_for(&"a".repeat(32)), Some("md5"));
+        assert_eq!(algo_for(&"A".repeat(40)), Some("sha1"));
+        assert_eq!(algo_for(&"0".repeat(64)), Some("sha256"));
+        for bad in ["xyz", &"a".repeat(33), ""] {
+            assert_eq!(algo_for(bad), None, "{bad}");
+        }
+        let mut db = HashDatabase::default();
+        assert!(db.add("nothex", "x", "malicious").is_err());
+        let h = hash_bytes(b"evil");
+        db.add(&h.md5, "ByMd5", "malicious").unwrap();
+        db.add(&h.sha256.to_uppercase(), "BySha", "suspicious")
+            .unwrap();
+        assert_eq!(db.len(), 2);
+        let (algo, e) = db.lookup(&h).unwrap();
+        assert_eq!(
+            (algo, e.name.as_str(), e.verdict),
+            ("sha256", "BySha", Verdict::Suspicious)
+        );
+        assert!(db.lookup(&hash_bytes(b"good")).is_none());
+        let md5_only = Hashes {
+            md5: h.md5.clone(),
+            ..Default::default()
+        };
+        assert_eq!(db.lookup(&md5_only).unwrap().1.name, "ByMd5");
+    }
+
+    #[test]
+    fn json_and_text_lists() {
+        let mut db = HashDatabase::default();
+        let json = format!(
+            r#"{{"entries": [{{"sha1": "{}", "name": "B", "verdict": "suspicious"}}, {{"md5": "{}"}}]}}"#,
+            "b".repeat(40),
+            "c".repeat(32)
+        );
+        db.load(Path::new("h.json"), json.as_bytes()).unwrap();
+        let sha1 = Hashes {
+            sha1: "b".repeat(40),
+            ..Default::default()
+        };
+        assert_eq!(db.lookup(&sha1).unwrap().1.verdict, Verdict::Suspicious);
+        let md5 = Hashes {
+            md5: "c".repeat(32),
+            ..Default::default()
+        };
+        assert_eq!(db.lookup(&md5).unwrap().1.name, "Unnamed");
+        let text = format!(
+            "# comment\n\n{}  Trojan.X  # trailing\n{}\nnot-a-hash Foo\n",
+            "d".repeat(64),
+            "e".repeat(32)
+        );
+        let mut db = HashDatabase::default();
+        db.load(Path::new("list.txt"), text.as_bytes()).unwrap();
+        assert_eq!(db.len(), 2);
+        let sha = Hashes {
+            sha256: "d".repeat(64),
+            ..Default::default()
+        };
+        assert_eq!(db.lookup(&sha).unwrap().1.name, "Trojan.X");
+        let md5 = Hashes {
+            md5: "e".repeat(32),
+            ..Default::default()
+        };
+        assert_eq!(db.lookup(&md5).unwrap().1.name, "Hash.Blocklisted");
+    }
+}

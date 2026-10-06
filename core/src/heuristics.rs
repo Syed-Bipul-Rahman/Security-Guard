@@ -321,4 +321,149 @@ mod tests {
         assert_eq!(ids(&elf_indicators(&d)), ["elf.packer", "elf.ld-preload"]);
         assert!(macho_indicators(b"\xcf\xfa\xed\xfe").is_empty());
     }
+
+    // ---- test_av_heuristics.py, PE / ELF / Mach-O / scripts
+
+    fn noise(n: usize, seed: u64) -> Vec<u8> {
+        let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        (0..n).map(|_| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; (x >> 24) as u8 }).collect()
+    }
+
+    /// conftest.build_pe: a minimal PE32 image, sections at 0x1000, 0x2000, ...
+    fn build_pe(sections: &[(&[u8], u32, Vec<u8>)], entry: u32, extra: &[u8], opt_magic: u16, dll: bool) -> Vec<u8> {
+        let opt_size = 0xE0usize;
+        let headers = 0x40 + 4 + 20 + opt_size + 40 * sections.len();
+        let raw = (headers + 0x1FF) & !0x1FF;
+        let mut out = vec![0u8; 0x40];
+        out[0..2].copy_from_slice(b"MZ");
+        out[0x3C..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+        out.extend_from_slice(b"PE\0\0");
+        out.extend_from_slice(&0x14Cu16.to_le_bytes());
+        out.extend_from_slice(&(sections.len() as u16).to_le_bytes());
+        out.extend_from_slice(&[0u8; 12]);
+        out.extend_from_slice(&(opt_size as u16).to_le_bytes());
+        out.extend_from_slice(&(if dll { 0x2000u16 } else { 0x0102 }).to_le_bytes());
+        let mut opt = vec![0u8; opt_size];
+        opt[0..2].copy_from_slice(&opt_magic.to_le_bytes());
+        opt[16..20].copy_from_slice(&entry.to_le_bytes());
+        out.extend_from_slice(&opt);
+        let mut ptr = raw as u32;
+        for (i, (name, flags, body)) in sections.iter().enumerate() {
+            let mut n = [0u8; 8];
+            n[..name.len()].copy_from_slice(name);
+            out.extend_from_slice(&n);
+            let len = body.len() as u32;
+            for v in [len, 0x1000 * (i as u32 + 1), len, ptr, 0, 0] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend_from_slice(&[0u8; 4]);
+            out.extend_from_slice(&flags.to_le_bytes());
+            ptr += len;
+        }
+        out.resize(raw, 0);
+        for (_, _, body) in sections {
+            out.extend_from_slice(body);
+        }
+        out.extend_from_slice(extra);
+        out
+    }
+
+    const X: u32 = SCN_EXECUTE;
+    const W: u32 = SCN_WRITE;
+    const R: u32 = 0x4000_0000;
+    const C: u32 = SCN_CODE;
+
+    fn plain_pe(extra: &[u8]) -> Vec<u8> {
+        build_pe(&[(b".text", X | R | C, vec![0x90; 512]), (b".data", R | W, vec![0; 512])], 0x1000, extra, 0x10B, false)
+    }
+
+    fn sorted(v: &[Indicator]) -> Vec<&str> {
+        let mut ids = ids(v);
+        ids.sort_unstable();
+        ids
+    }
+
+    #[test]
+    fn parse_pe_accepts_and_rejects() {
+        let dll = build_pe(&[(b".text", X | R | C, vec![0x90; 512]), (b".data", R | W, vec![0; 512])], 0x1000, b"", 0x10B, true);
+        let names: Vec<Vec<u8>> = parse_pe(&dll).unwrap().sections.into_iter().map(|s| s.name).collect();
+        assert_eq!(names, [b".text".to_vec(), b".data".to_vec()]);
+        assert!(parse_pe(&build_pe(&[], 0x1000, b"", 0x20B, false)).is_some());
+        let mut no_pe = b"MZ".to_vec();
+        no_pe.extend_from_slice(&[0u8; 0x3A]);
+        no_pe.extend_from_slice(&0x40u32.to_le_bytes());
+        no_pe.extend_from_slice(b"XX\0\0");
+        for bad in [b"ELF".to_vec(), b"MZ".to_vec(), no_pe, build_pe(&[], 0x1000, b"", 0x999, false), plain_pe(b"")[..0x58].to_vec()] {
+            assert!(parse_pe(&bad).is_none());
+        }
+    }
+
+    #[test]
+    fn pe_shapes() {
+        assert!(pe_indicators(&plain_pe(b"")).is_empty());
+        // anti-debug alone is common in legit software and stays tiny
+        let lone = pe_indicators(&plain_pe(b"IsDebuggerPresent\0CheckRemoteDebuggerPresent\0"));
+        assert_eq!(ids(&lone), ["pe.api.anti-debug"]);
+        assert!(lone.iter().map(|i| i.1).sum::<u32>() < 70);
+        assert_eq!(ids(&pe_indicators(&[b"MZ".as_slice(), &[0u8; 100]].concat())), ["pe.malformed"]);
+        let apis: &[u8] = b"VirtualAllocEx\0WriteProcessMemory\0CreateRemoteThread\0NtUnmapViewOfSection\0SetThreadContext\0ResumeThread\0SetWindowsHookExA\0GetAsyncKeyState\0";
+        let packed = build_pe(&[(b"UPX0", X | W | R, noise(4096, 7)), (b".rsrc", R, vec![0; 64])], 0x9000, apis, 0x10B, false);
+        assert_eq!(sorted(&pe_indicators(&packed)), ["pe.api.keylogger", "pe.api.process-hollowing", "pe.api.process-injection",
+                                                   "pe.entry.outside", "pe.packer", "pe.section.high-entropy", "pe.section.wx"]);
+        let non_code = build_pe(&[(b".text", X | C | R, vec![0x90; 64]), (b".data", R | W, vec![0; 64])], 0x2000, b"", 0x10B, false);
+        assert_eq!(ids(&pe_indicators(&non_code)), ["pe.entry.non-code"]);
+        // a resource-only DLL has no entry point; no sections, nothing to judge
+        let resource = build_pe(&[(b".text", X | R | C, vec![0x90; 512]), (b".data", R | W, vec![0; 512])], 0, b"", 0x10B, true);
+        assert!(pe_indicators(&resource).is_empty());
+        assert!(pe_indicators(&build_pe(&[], 0x1000, b"", 0x10B, false)).is_empty());
+        // too small a section for its entropy to mean anything
+        assert!(pe_indicators(&build_pe(&[(b".text", X | C, noise(512, 3))], 0x1000, b"", 0x10B, false)).is_empty());
+    }
+
+    #[test]
+    fn elf_and_macho_shapes() {
+        let elf = |body: &[u8]| [b"\x7fELF\x02\x01\x01".as_slice(), &[0u8; 9], body].concat();
+        assert!(elf_indicators(&elf(&[0u8; 64])).is_empty());
+        let packed = elf(&[b"UPX!".as_slice(), &noise(8192, 5), b"/etc/ld.so.preload"].concat());
+        assert_eq!(ids(&elf_indicators(&packed)), ["elf.packer", "elf.high-entropy", "elf.ld-preload"]);
+        assert_eq!(ids(&elf_indicators(&elf(&[vec![0u8; 9000], b"UPX!".to_vec()].concat()))), ["elf.packer"]);
+        assert!(macho_indicators(&[b"\xcf\xfa\xed\xfe".as_slice(), &[0u8; 5000]].concat()).is_empty());
+        let random = [b"\xcf\xfa\xed\xfe".as_slice(), &noise(5000, 9)].concat();
+        assert_eq!(ids(&macho_indicators(&random)), ["macho.high-entropy"]);
+    }
+
+    #[test]
+    fn script_cases() {
+        let blob = "QUJD".repeat(600);
+        let x_ids = |n: usize| (0..n).map(|i| format!("_0x{i:04x}")).collect::<Vec<_>>().join(" ");
+        let codes = |same: bool| (0..40).map(|i| if same { 65 } else { 65 + i % 26 }.to_string()).collect::<Vec<_>>().join(",");
+        let a = "A".repeat(120);
+        // split so this source never holds the strings the rules hunt for
+        let iex = ["I", "EX"].concat();
+        let amsi = ["Amsi", "ScanBuffer"].concat();
+        let cases: Vec<(String, Vec<&str>)> = vec![
+            (format!("eval(atob('{blob}'))"), vec!["script.exec-encoded-blob"]),
+            (format!("const img = 'data:image/png;base64,{blob}';"), vec![]),
+            (x_ids(60), vec!["script.js-obfuscator"]),
+            (x_ids(10), vec![]),
+            (format!("eval(String.fromCharCode({}))", codes(false)), vec!["script.charcode-exec"]),
+            (format!("String.fromCharCode({})", codes(true)), vec![]),
+            ("\\x41".repeat(400), vec!["script.hex-escaped"]),
+            (format!("{}{}", "\\x41".repeat(400), "A".repeat(10000)), vec![]),
+            (format!("powershell -enc {a}"), vec!["ps.encoded-command"]),
+            (format!("powershell -w hidden -EncodedCommand {a}"), vec!["ps.encoded-command", "ps.hidden-window"]),
+            ("powershell -w hidden -c Get-Date".into(), vec![]),
+            (format!("{iex} ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p)))"), vec!["ps.decode-exec"]),
+            ("[Convert]::FromBase64String($p)".into(), vec![]),
+            (format!("x = 'Amsi' + 'ScanBuffer'; {amsi}"), vec!["ps.amsi-bypass"]),
+            ("print('hello world')".into(), vec![]),
+        ];
+        for (data, want) in cases {
+            let got = script_indicators(data.as_bytes());
+            let mut want = want;
+            want.sort_unstable();
+            assert_eq!(sorted(&got), want, "{}", &data[..data.len().min(60)]);
+        }
+    }
 }
+

@@ -791,4 +791,85 @@ mod tests {
         );
         assert_eq!(compact_ts(0), "19700101T000000Z");
     }
+
+    // ---- test_remediation_and_crypto.py
+    const EVAL: &str = concat!("eval(proxy", "Info)");
+
+    #[test]
+    fn matching_brackets_like_remediator_py() {
+        for (src, want) in [
+            ("(a(b)c)", Some(6)),
+            ("(')' + \")\")", Some(10)),
+            ("(`x ${ '}' + `y` } )`)", Some(21)),
+            ("(a // )\n)", Some(8)),
+            ("(a /* ) */ )", Some(11)),
+            ("(unclosed", None),
+            ("{a}", Some(2)),
+        ] {
+            assert_eq!(matching_bracket(src.as_bytes(), 0), want, "{src}");
+        }
+        for (src, ok) in [
+            ("f(a[1], {b: 2})", true),
+            ("f(a]", false),
+            (")", false),
+            ("(", false),
+            ("'(' + \"[\" + `${'{'}` // (\n /* [ */", true),
+            ("`a\\`b`", true),
+            ("'esc\\'q'", true),
+            ("`${ \"\\}\" }`", true),
+            ("`a ${ `inner ${1}` } b`", true),
+            ("`${ a \\} }`", true),
+            ("`${ {a: 1}.a }`", true),
+        ] {
+            assert_eq!(brackets_balanced(src.as_bytes()), ok, "{src}");
+        }
+        // unterminated strings, comments and templates run to the end
+        assert_eq!(skip_string(b"'abc", 0, b'\''), 4);
+        assert_eq!(skip_block_comment(b"/* x", 0), 4);
+        assert_eq!(skip_template(b"`abc", 0), 4);
+        assert_eq!(skip_template(b"`${ \\x", 0), 6);
+    }
+
+    #[test]
+    fn iife_excision_cases() {
+        let injected = format!(
+            "import {{ defineConfig }} from \"vite\";\n(async () => {{ const proxyInfo = atob(process.env.AUTH_API_KEY); {EVAL}; }})();\nexport default defineConfig({{ plugins: [] }});\n"
+        );
+        let (new, removed) = strip_malicious_iife(&injected);
+        assert_eq!(removed.len(), 1);
+        assert!(removed[0].contains(EVAL));
+        assert_eq!(new, "import { defineConfig } from \"vite\";\nexport default defineConfig({ plugins: [] });\n");
+        for src in [
+            "(function(){ console.log(1) })();".to_string(), // benign IIFE
+            "(() => { eval(x) })".to_string(),               // not invoked
+            format!("(() => {{ {EVAL} }}"),                  // unbalanced wrapper
+            format!("(() => {{ {EVAL} }}) ("),               // unbalanced invocation
+            format!("(() => {{ {EVAL} }})"),                 // wrapper ends the file
+        ] {
+            assert_eq!(strip_malicious_iife(&src), (src.clone(), vec![]), "{src}");
+        }
+        // weak markers in combination, a nested IIFE inside the removed one
+        let src =
+            "x;\n  (function () { eval(require('node-fetch')) ; (a => a)(1) }) ()  \n\n\n\ny;";
+        let (new, removed) = strip_malicious_iife(src);
+        assert!(!removed.is_empty());
+        assert_eq!(new, "x;\n\ny;");
+        assert!(iife_is_malicious("eval(atob('x'))") && !iife_is_malicious("eval(1)"));
+        let src2 = format!("z; (async () => {{ {EVAL} }})() ;tail");
+        assert_eq!(strip_malicious_iife(&src2).0, "z; ;tail");
+    }
+
+    #[test]
+    fn jsonc_and_task_rules() {
+        let txt = "{\"url\": \"http://x//y\", /* c */ \"a\": [1,], // t\n \"b\": '/*k*/',}";
+        assert_eq!(
+            strip_jsonc(txt),
+            "{\"url\": \"http://x//y\",  \"a\": [1], \n \"b\": '/*k*/'}"
+        );
+        let task = |v: serde_json::Value| Remediator::task_is_malicious(v.as_object().unwrap());
+        assert!(task(
+            json!({"runOn": "folderOpen", "command": "powershell -e AAA"})
+        ));
+        assert!(!task(json!({"runOptions": "x", "command": "iex "})));
+    }
 }

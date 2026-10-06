@@ -166,4 +166,30 @@ mod tests {
         assert!(m("a[b", "a[b"));
         assert!(m("a.b", "a.b") && !m("a.b", "axb"));
     }
+
+    /// test_av_core.py TestAllowlist.test_hash_path_and_rule.
+    #[test]
+    fn hash_path_and_rule() {
+        let a = Allowlist::load(
+            r#"{"sha256": ["ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"],
+                "paths": ["*/vendor/*"], "rules": ["rule.x", "Threat.Y"]}"#,
+        )
+        .unwrap();
+        assert!(a
+            .file_reason("x", &"ab".repeat(32))
+            .starts_with("known-good hash"));
+        assert_eq!(
+            a.file_reason("C:\\proj\\vendor\\lib.dll", ""),
+            "path matches */vendor/*"
+        );
+        assert_eq!(a.file_reason("/proj/src/a.js", &"00".repeat(32)), "");
+        let det = |name: &str, rule_id: &str| Detection {
+            name: name.into(),
+            rule_id: rule_id.into(),
+            ..Default::default()
+        };
+        assert!(a.suppresses(&det("Other", "rule.x")));
+        assert!(a.suppresses(&det("Threat.Y", "")));
+        assert!(!a.suppresses(&det("Z", "rule.z")));
+    }
 }
