@@ -89,10 +89,3 @@ def test_guard_scan_reports_av_findings(tmp_path, capsys):
     assert guard.main(["scan", str(tmp_path)]) == 1
     assert "ANTIVIRUS ENGINE" in capsys.readouterr().out
     assert guard.main(["scan", str(ROOT / "testdata" / "clean-repo")]) == 0
-
-
-def test_build_spec_bundles_engine():
-    spec = (ROOT / "build" / "guard.spec").read_text()
-    assert '(str(ROOT / "guard_av"), "guard_av")' in spec
-    for mod in ("zipfile", "tarfile", "lzma", "bz2", "unicodedata"):
-        assert f'"{mod}"' in spec

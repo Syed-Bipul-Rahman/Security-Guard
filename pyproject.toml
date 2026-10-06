@@ -1,4 +1,4 @@
-# Tooling config only — Guard ships as a PyInstaller binary (see build/), not a wheel.
+# Tooling config only — Guard ships as a static Rust binary (cli/, built by build/build.sh), not a wheel.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

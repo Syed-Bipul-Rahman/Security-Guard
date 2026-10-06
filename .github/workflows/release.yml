@@ -65,79 +65,14 @@ jobs:
           else V="${GITHUB_REF_NAME#v}"; fi
           echo "version=${V#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Bake release identity into the binary
-        if: github.event_name != 'pull_request'
-        shell: bash
-        env:
-          PUBKEY: ${{ secrets.GUARD_UPDATE_PUBKEY }}
-          UPURL: ${{ secrets.GUARD_UPDATE_URL }}
-          TELURL: ${{ secrets.GUARD_TELEMETRY_URL }}
-          INGEST: ${{ secrets.GUARD_INGEST_TOKEN }}
-          VER: ${{ steps.v.outputs.version }}
-        run: |
-          python - <<'PY'
-          import os, re, pathlib
-          pub, url, ver = os.environ["PUBKEY"], os.environ["UPURL"], os.environ["VER"]
-          telurl, ingest = os.environ.get("TELURL", ""), os.environ.get("INGEST", "")
-          up = pathlib.Path("updater.py"); s = up.read_text()
-          s = re.sub(r'PUBKEY_HEX = os\.environ\.get\("GUARD_UPDATE_PUBKEY", "[^"]*"\)',
-                     f'PUBKEY_HEX = os.environ.get("GUARD_UPDATE_PUBKEY", "{pub}")', s)
-          s = re.sub(r'BASE_URL = os\.environ\.get\("GUARD_UPDATE_URL", "[^"]*"\)',
-                     f'BASE_URL = os.environ.get("GUARD_UPDATE_URL", "{url}")', s)
-          s = re.sub(r'CURRENT_VERSION = "[^"]*"', f'CURRENT_VERSION = "{ver}"', s)
-          up.write_text(s)
-          g = pathlib.Path("guard.py"); t = g.read_text()
-          t = re.sub(r'VERSION = "[^"]*"', f'VERSION = "{ver}"', t)
-          tel = pathlib.Path("telemetry.py"); tp = tel.read_text()
-          # Only OVERRIDE the telemetry endpoint/token when the CI secret is set;
-          # otherwise keep the working default hardcoded in source (don't blank it).
-          if telurl:
-              t = re.sub(r'TELEMETRY_URL = os\.environ\.get\("GUARD_TELEMETRY_URL", "[^"]*"\)',
-                         f'TELEMETRY_URL = os.environ.get("GUARD_TELEMETRY_URL", "{telurl}")', t)
-              tp = re.sub(r'DEFAULT_ENDPOINT = os\.environ\.get\("GUARD_TELEMETRY_URL", "[^"]*"\)',
-                          f'DEFAULT_ENDPOINT = os.environ.get("GUARD_TELEMETRY_URL", "{telurl}")', tp)
-          if ingest:
-              t = re.sub(r'INGEST_TOKEN = os\.environ\.get\("GUARD_INGEST_TOKEN", "[^"]*"\)',
-                         f'INGEST_TOKEN = os.environ.get("GUARD_INGEST_TOKEN", "{ingest}")', t)
-              tp = re.sub(r'DEFAULT_INGEST = os\.environ\.get\("GUARD_INGEST_TOKEN", "[^"]*"\)',
-                          f'DEFAULT_INGEST = os.environ.get("GUARD_INGEST_TOKEN", "{ingest}")', tp)
-          g.write_text(t)
-          tel.write_text(tp)
-          print("baked telemetry:", telurl or "(source default)")
-          print("baked", ver, url, pub[:12] + "...")
-          PY
-
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build single binary
-        shell: bash
-        env: { GUARD_REQUIRE_NATIVE: "1" }
-        run: |
-          python -m pip install --quiet --upgrade pip pyinstaller certifi
-          python -m pip install --quiet ./core
-          pyinstaller build/guard.spec --distpath build/dist --workpath build/work --clean --noconfirm
-
-      # The frozen binary must load guard_core and run YARA rules, not just build.
-      - name: Smoke-test binary (Rust core + YARA)
-        shell: bash
-        run: |
-          case "${{ matrix.plat }}" in windows-*) g=build/dist/guard.exe ;; *) g=build/dist/guard ;; esac
-          mkdir -p smoke/sigs
-          printf 'rule smoke_test { meta: verdict = "malicious" strings: $a = "GUARD-RELEASE-SMOKE" condition: $a }\n' > smoke/sigs/smoke.yar
-          printf 'xx GUARD-RELEASE-SMOKE xx\n' > smoke/hit.txt
-          "$g" version
-          "$g" av rules --validate smoke/sigs/smoke.yar
-          set +e; out=$("$g" av scan --signatures smoke/sigs smoke/hit.txt); rc=$?; set -e
-          echo "$out"
-          [ "$rc" = 1 ] && echo "$out" | grep -q 'yara: smoke_test' || { echo "YARA smoke scan did not detect the test file"; exit 1; }
-
-      # The Rust port of guard (cli/), one static binary per platform. Built and
-      # tested next to the PyInstaller binary on every run; not published until
-      # it replaces it (PR dry runs upload it for trying out).
-      - name: Build static Rust guard
+      # The shipped `guard`: one static Rust binary per platform (cli/). The
+      # release identity (update key + channel, telemetry) and the version are
+      # compiled in; telemetry only overrides the source default when its secret
+      # is set.
+      - name: Build static guard
         id: rs
-        # gates PR dry runs; never blocks a real release of the Python build
-        continue-on-error: ${{ github.event_name != 'pull_request' }}
         shell: bash
         env:
           GUARD_VERSION: ${{ steps.v.outputs.version }}
@@ -147,8 +82,6 @@ jobs:
           INGEST: ${{ secrets.GUARD_INGEST_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            # same release identity the Python build gets baked in above;
-            # telemetry only overrides the source default when the secret is set
             export GUARD_UPDATE_PUBKEY="$PUBKEY" GUARD_UPDATE_URL="$UPURL"
             if [ -n "$TELURL" ]; then export GUARD_TELEMETRY_URL="$TELURL"; fi
             if [ -n "$INGEST" ]; then export GUARD_INGEST_TOKEN="$INGEST"; fi
@@ -172,33 +105,44 @@ jobs:
           exe=""; case "$t" in *windows*) exe=.exe ;; esac
           echo "bin=cli/target/$t/release/guard$exe" >> "$GITHUB_OUTPUT"
 
-      # Self-contained, and each ported command matches the Python build on this
-      # OS (including the self-update rename swap on Windows).
-      - name: Test Rust guard (static + parity with Python)
-        continue-on-error: ${{ github.event_name != 'pull_request' }}
+      # Self-contained, reports the version the manifest will offer (or installs
+      # would update forever), and runs YARA rules.
+      - name: Smoke-test binary (static + version + YARA)
+        shell: bash
+        env:
+          GUARD_VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          g="${{ steps.rs.outputs.bin }}"; ls -l "$g"
+          case "${{ matrix.plat }}" in
+            linux-*)  file "$g"; file "$g" | grep -Eq 'statically linked|static-pie linked' ;;
+            darwin-*) otool -L "$g"
+                      if otool -L "$g" | tail -n +2 | grep -Ev '^\s*/(usr/lib|System/Library)/'; then
+                        echo "links a non-system library"; exit 1
+                      fi ;;
+          esac
+          v=$("$g" version | tr -d '\r'); echo "$v"
+          [ "$v" = "guard $GUARD_VERSION" ] || { echo "binary reports '$v', expected 'guard $GUARD_VERSION'"; exit 1; }
+          mkdir -p smoke/sigs
+          printf 'rule smoke_test { meta: verdict = "malicious" strings: $a = "GUARD-RELEASE-SMOKE" condition: $a }\n' > smoke/sigs/smoke.yar
+          printf 'xx GUARD-RELEASE-SMOKE xx\n' > smoke/hit.txt
+          "$g" av rules --validate smoke/sigs/smoke.yar
+          set +e; out=$("$g" av scan --signatures smoke/sigs smoke/hit.txt); rc=$?; set -e
+          echo "$out"
+          [ "$rc" = 1 ] && echo "$out" | grep -q 'yara: smoke_test' || { echo "YARA smoke scan did not detect the test file"; exit 1; }
+
+      # Each command matches the Python reference implementation on this OS
+      # (including the self-update rename swap on Windows). Releases rely on the
+      # same suite having passed in the PR dry run and the test job above.
+      - name: Test guard against the Python reference
+        if: github.event_name == 'pull_request'
         shell: bash
         env:
           GUARD_RS_BIN: ${{ steps.rs.outputs.bin }}
           GUARD_VERSION: ${{ steps.v.outputs.version }}
         run: |
-          b="$GUARD_RS_BIN"; ls -l "$b"
-          case "${{ matrix.plat }}" in
-            linux-*)  file "$b"; file "$b" | grep -Eq 'statically linked|static-pie linked' ;;
-            darwin-*) otool -L "$b"
-                      if otool -L "$b" | tail -n +2 | grep -Ev '^\s*/(usr/lib|System/Library)/'; then
-                        echo "links a non-system library"; exit 1
-                      fi ;;
-          esac
-          "$b" version
-          python -m pip install --quiet -r requirements-dev.txt
+          # the Python reference needs guard_core for YARA and native file events
+          python -m pip install --quiet -r requirements-dev.txt ./core
           python -m pytest tests/test_rust_binary.py tests/test_rust_commands.py tests/test_rust_av.py tests/test_rust_scan.py tests/test_rust_watch.py --no-cov -p no:cacheprovider -q
-
-      - name: Upload Rust guard (dry run only)
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-guard-${{ matrix.plat }}
-          path: ${{ steps.rs.outputs.bin }}
 
       - name: Name artifact
         id: name
@@ -206,9 +150,10 @@ jobs:
         run: |
           mkdir -p out
           case "${{ matrix.plat }}" in
-            windows-*) cp build/dist/guard.exe "out/guard-${{ matrix.plat }}.exe"; f="out/guard-${{ matrix.plat }}.exe" ;;
-            *)         cp build/dist/guard     "out/guard-${{ matrix.plat }}";     f="out/guard-${{ matrix.plat }}" ;;
+            windows-*) f="out/guard-${{ matrix.plat }}.exe" ;;
+            *)         f="out/guard-${{ matrix.plat }}" ;;
           esac
+          cp "${{ steps.rs.outputs.bin }}" "$f"
           echo "file=$f" >> "$GITHUB_OUTPUT"
 
       # ---- Windows Authenticode signing via SignPath Foundation ----

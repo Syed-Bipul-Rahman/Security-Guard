@@ -34,12 +34,10 @@ This prints:
 Then **delete `guard-update.key` from disk** (or move it to a vault). Keep one offline backup.
 
 ### 1c. Bake the public key into the source
-Set `PUBKEY_HEX` in `updater.py` to your public key (the release workflow also injects
-it at build time, but setting it in source makes local/dev builds consistent):
-```python
-PUBKEY_HEX = os.environ.get("GUARD_UPDATE_PUBKEY", "<your-public-key-hex>")
-```
-Commit that change.
+Set the default public key to yours in `cli/src/update.rs` (`DEFAULT_PUBKEY`) and in
+`updater.py` (`PUBKEY_HEX`, the reference implementation). The release workflow also
+compiles it in from `GUARD_UPDATE_PUBKEY`, but setting it in source makes local builds
+consistent. Commit that change.
 
 ---
 
@@ -49,8 +47,9 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 That triggers `.github/workflows/release.yml`, which:
-1. builds the `guard` binary on all 5 OSes (linux-x64/arm64, darwin-arm64/x64, windows-x64),
-   baking in the public key + URL + version,
+1. builds the static Rust `guard` binary on all 5 platforms (linux-x64/arm64,
+   darwin-arm64, windows-x64/arm64), compiling in the public key + URL + version, and
+   checks each one reports that version and catches a YARA test file,
 2. refreshes the malware blocklist,
 3. **signs** a manifest with your secret key,
 4. publishes a **GitHub Release** with: `guard-<platform>` binaries, `malware-blocklist.json`,
@@ -68,6 +67,14 @@ curl -fsSL https://security.syedbipul.me/guard.sh | sudo bash
 The service then checks the signed manifest every ~6 h (config: `update_check_sec` in
 `~/.guard/watcher.config.json`) and auto-applies blocklist + binary updates. A binary
 update swaps atomically and the service restarts into the new version.
+
+**The switch from the PyInstaller build.** Releases used to ship a PyInstaller build of
+`guard.py`; they now ship the Rust binary under the same asset names. The first such
+release reaches existing installs like any other update: the old build verifies the
+signed manifest, swaps in the Rust binary and the service restarts into it, keeping
+`~/.guard` (snapshot, quarantine, dashboard ID). `tests/test_rust_binary.py` checks this
+path. The `guard.bak` it leaves is the PyInstaller build, so the rollback below applies.
+Canary that first release.
 
 ---
 
@@ -107,4 +114,4 @@ If the secret key is exposed:
 | "SIGNATURE INVALID" in logs | manifest signed with a different key than baked in — re-check the pair |
 | Release job fails at "Restore signing key" | `GUARD_SIGN_KEY_B64` secret missing/malformed |
 | Windows binary not swapping | expected — it stages `guard.pending.exe`, applied on next service start |
-| Build fails on one OS only | that runner's PyInstaller/Python issue; the matrix has `fail-fast: false` so others still ship |
+| Build fails on one OS only | that runner's Rust toolchain or target issue; the matrix has `fail-fast: false` so others still ship |
