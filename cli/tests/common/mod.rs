@@ -4,7 +4,9 @@
 //! (scratch paths, timings, random ids) and compares the result with a golden
 //! file in tests/golden/. The goldens were recorded from guard.py, the Python
 //! build this binary replaced, so these tests keep proving the binary behaves
-//! the way the Python one did.
+//! the way the Python one did. guard.py was deleted from the repository
+//! after they were recorded; to re-check a golden against it, run these tests
+//! from a checkout of the last commit that has it (`git log -- guard.py`).
 //!
 //! Environment:
 //!   GUARD_RS_BIN=path        test this binary instead of the one cargo built

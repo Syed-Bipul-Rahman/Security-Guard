@@ -1690,8 +1690,8 @@ fn watch_alerts_but_keeps_source() {
 fn bundled_databases_are_allowlisted() {
     let tmp = Tmp::new("own-dbs");
     let d = tmp.join("dbs");
-    for f in ["rules.json", "hashes.json"] {
-        let src = repo_root().join("guard_av/data").join(f);
+    for f in ["av-rules.json", "av-hashes.json"] {
+        let src = repo_root().join("data").join(f);
         write(&d.join(f), std::fs::read(&src).unwrap());
     }
     let out = av(&tmp, &["scan", &s(&d), "--json"]).run();

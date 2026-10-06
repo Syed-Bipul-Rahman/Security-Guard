@@ -13,14 +13,21 @@ especially new detection signatures for supply-chain malware.
 ## Getting started
 
 1. **Fork** the repo and create a feature branch off `main`.
-2. Guard ships as one static Rust binary (`cli/`). The Python modules in the repo
-   are its reference implementation and run from source:
+2. Guard ships as one static Rust binary (`cli/`), with the engine core in `core/`
+   and the release signer in `release/`. Change the Rust, then build and re-run the
+   tests:
    ```bash
-   python guard.py scan testdata/<fixture>
+   cargo build --locked --manifest-path cli/Cargo.toml
+   cli/target/debug/guard scan testdata/<fixture>
+   cargo test --locked --manifest-path cli/Cargo.toml
+   cargo test --manifest-path core/Cargo.toml
+   cargo test --manifest-path release/Cargo.toml
    ```
-   A behavior change goes into both, or the side-by-side tests (`tests/test_rust_*.py`)
-   fail.
-3. To build the standalone binary (per OS, with a Rust toolchain):
+   The integration tests in `cli/tests/` compare the binary's output with golden
+   files in `cli/tests/golden/`. A deliberate behavior change means re-recording
+   the affected goldens with `GUARD_GOLDEN=record` and reviewing the diff
+   (goldens are base64; read one with `base64 -d < cli/tests/golden/<dir>/<name>.b64`).
+3. To build the release binary (per OS, with a Rust toolchain):
    ```bash
    bash build/build.sh
    ```
@@ -56,11 +63,16 @@ broad-scope GitHub token on the endpoint. Please keep changes within these bound
 
 ## Code layout
 
-`guard.py` (entrypoint/CLI) · `scanner.py` (orchestrator) · `fingerprint_matcher.py`
-· `vscode_guard.py` · `magic_bytes.py` · `workflow_baseline.py` · `dep_blocklist.py`
-(detection) · `watcher.py` (service) · `remediator.py` (auto-clean) · `notifier.py`
-(alerts) · `updater.py` (OTA) · `telemetry.py` (dashboard) · `permissions.py` (macOS
-access) · `memguard.py` + `snapshot_store.py` (memory-bounded scanning).
+`cli/src/main.rs` (entrypoint/CLI) · `cli/src/av/` (antivirus engine) ·
+`cli/src/scan/` (`scanner` orchestrator, `fingerprint`, `vscode`, `magic`,
+`workflow`, `depbl` detection, `remediate` auto-clean) · `cli/src/watch/` (`watcher`
+service, `memguard` + `store` memory-bounded scanning) · `sensor.rs` (Windows
+sensor) · `deps.rs` (malware blocklist) · `update.rs` (OTA) · `telemetry.rs`
+(dashboard) · `install.rs` (service install) · `notify.rs` (alerts) ·
+`permissions.rs` (macOS access) · `core/src/` (`guard_core`: rule matching, YARA,
+heuristics, native file events) · `release/src/` (`sign-manifest` release signer) ·
+`data/av-rules.json` + `data/av-hashes.json` (AV signatures, compiled into the
+binary) · `cli/tests/` (integration tests and goldens).
 
 ## Reporting security issues
 

@@ -1,14 +1,13 @@
 # Guard — antivirus & supply-chain malware agent
 
 [![tests](https://github.com/Syed-Bipul-Rahman/Security-Guard/actions/workflows/tests.yml/badge.svg)](https://github.com/Syed-Bipul-Rahman/Security-Guard/actions/workflows/tests.yml)
-![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 ![false positives](https://img.shields.io/badge/false%20positives-0-brightgreen)
 ![version](https://img.shields.io/badge/version-2.0.0-blue)
 
 One self-contained `guard` binary for every user machine (**Linux / macOS /
 Windows**). It runs always-on and combines two engines:
 
-- a **general antivirus engine** (`guard_av`) — hash signatures, YARA-style
+- a **general antivirus engine** (`guard av`) — hash signatures, YARA-style
   rules, static heuristics and recursive archive scanning for webshells, reverse
   shells, credential dumpers, droppers, malicious macros, packed injectors,
   miners and more;
@@ -30,10 +29,10 @@ dashboard.
 
 ## What's new in v2.0.0
 
-- **New antivirus engine (`guard_av`)** — layered hash DB → YARA-style rules →
+- **New antivirus engine (`guard av`)** — layered hash DB → YARA-style rules →
   heuristics → archive scanning, used automatically by the watcher, `guard scan`
   and `guard clean`, and directly via `guard av ...`. See
-  [Antivirus engine](#antivirus-engine-guard_av-v2).
+  [Antivirus engine](#antivirus-engine-guard-av).
 - **Neutered quarantine vault** — whole-file threats are stored encrypted with a
   per-item key and restored only after a SHA-256 integrity check.
 - **422 tests, 100% line + branch coverage** of the detection and remediation
@@ -178,10 +177,10 @@ looks clean. So Guard fixes the **working tree by content**, never git history:
 
 ---
 
-## Antivirus engine (`guard_av`, v2)
+## Antivirus engine (`guard av`)
 
 Besides the incident-specific engines, Guard ships a general anti-malware engine
-(pure Python stdlib, no native deps). Every file goes through a layered pipeline:
+(built into the `guard` binary, no external dependencies). Every file goes through a layered pipeline:
 
 | Layer | What it does | Can produce |
 |---|---|---|
@@ -244,20 +243,17 @@ bash build/build.sh                          # Linux needs musl-tools first
 ./build/dist/guard version
 ```
 
-The Python modules (`guard.py`, `scanner.py`, `guard_av/`, ...) are the reference
-implementation the binary was ported from. They still run from source
-(`python guard.py ...`), and `tests/test_rust_*.py` run both and require the same
-output on every OS.
+Rule matching, YARA and the content heuristics live in the engine core crate
+(`core/`, `guard_core`), which `cli/` links in. The AV rule and hash databases
+(`data/av-rules.json`, `data/av-hashes.json`) are compiled into the binary by
+`cli/build.rs`.
 
-Rule matching and the content heuristics run in a Rust extension (`core/`,
-imported as `guard_core`). Without it, `guard_av` falls back to identical pure-Python
-code, about 15-60x slower on rule matching; `GUARD_AV_BACKEND=python` forces that
-fallback. The same extension gives the watcher native file-change events (inotify,
-FSEvents, ReadDirectoryChangesW), so it reacts to a new file in under a second
-without re-walking every watch root. It still runs a full snapshot pass at start,
-every `full_rescan_sec` (default 300) and whenever the OS drops events. Without the
-extension, or with `"native_events": false` in `watcher.config.json`, it polls every
-`poll_interval_sec` as before. On Linux each watched directory uses one inotify
+The core also gives the watcher native file-change events (inotify, FSEvents,
+ReadDirectoryChangesW), so it reacts to a new file in under a second without
+re-walking every watch root. It still runs a full snapshot pass at start, every
+`full_rescan_sec` (default 300) and whenever the OS drops events. With
+`"native_events": false` in `watcher.config.json` it polls every
+`poll_interval_sec` instead. On Linux each watched directory uses one inotify
 watch; if `fs.inotify.max_user_watches` runs out, the watcher logs it and polls.
 
 Releases are built for all five platforms by `.github/workflows/release.yml` on a
@@ -269,17 +265,20 @@ and publishes the GitHub Release.
 ## Testing
 
 ```bash
-pip install -r requirements-dev.txt
-pip install ./core                          # the coverage gate needs the Rust backend
-python -m pytest --cov                      # every engine test runs on both backends, 100% coverage gate
-cargo test --manifest-path core/Cargo.toml
-GUARD_FP_FULL=1 python -m pytest tests/test_detection_accuracy.py -k false_positives --no-cov
+cargo test --locked --manifest-path cli/Cargo.toml       # unit + integration tests (cli/tests/*.rs)
+cargo test --manifest-path core/Cargo.toml               # engine core
+cargo test --manifest-path release/Cargo.toml            # release signer
+GUARD_FP_FULL=1 cargo test --locked --manifest-path cli/Cargo.toml --test detection   # full false-positive sweep
 ```
 
 The suite covers unit tests per engine, detection-rate tests (every malicious
 sample detected, also inside zip / tar.gz / gzip / nested archives), the zero
-false-positive sweep, and integration with the watcher, scanner, remediator and
-`guard` CLI. Live malware samples are stored base64-encoded and only decoded in
+false-positive sweep (system binaries, the Python standard library if present,
+this repo and the binary itself), and integration tests that run the `guard`
+binary (AV, scan, commands, updater, watcher, tools) and compare its output with
+golden files in `cli/tests/golden/`. The goldens were recorded from the earlier
+Python build, so they pin the binary to its behaviour; they are stored base64
+(read one with `base64 -d`). Live malware samples are stored base64-encoded and only decoded in
 memory, so the repository itself always scans clean. CI runs it on every push and
 the release workflow refuses to build if it fails.
 
@@ -291,28 +290,30 @@ Contributions are welcome — especially new detection signatures.
 
 1. **Fork** and create a feature branch off `main`.
 2. **Signatures are data, not code.** General malware rules and hashes go in
-   `guard_av/data/rules.json` / `hashes.json`, or as YARA in a `*.yar` file
+   `data/av-rules.json` / `data/av-hashes.json`, or as YARA in a `*.yar` file
    (validate either with `guard av rules --validate <file>`); incident IOCs go in `signatures.json`
    (fingerprints, dropper paths, `.vscode` rules). No code change needed. Add a
    matching fixture under `testdata/`, or a base64-encoded sample in
-   `tests/samples.py` so live signatures never land in the repo.
+   `cli/tests/common/samples.rs` so live signatures never land in the repo.
 3. **Add tests / fixtures** for anything you change, and keep false positives at
-   zero (clean controls must still pass, coverage must stay at 100%).
+   zero (clean controls must still pass).
 4. Run the engines and the suite locally:
    ```bash
    guard scan testdata/<your-fixture>
-   python -m pytest --cov
+   cargo test --locked --manifest-path cli/Cargo.toml
    ```
 5. **Open a PR** describing the technique, the signature, and the fixture.
 
-Code layout: `guard.py` (entrypoint/CLI) · `scanner.py` (orchestrator) ·
-`guard_av/` (antivirus engine: `engine`, `rules`, `heuristics`, `archive`,
-`yara_rules`, `hashdb`, `allowlist`, `quarantine`, `filetype`, `cli`) ·
-`fingerprint_matcher.py` · `vscode_guard.py` · `magic_bytes.py` ·
-`workflow_baseline.py` · `dep_blocklist.py` (detection) · `watcher.py` (service) ·
-`remediator.py` (auto-clean) · `notifier.py` (alerts) · `updater.py` (OTA) ·
-`telemetry.py` (dashboard) · `permissions.py` (macOS access) · `memguard.py` +
-`snapshot_store.py` (memory-bounded scanning).
+Code layout: `cli/src/main.rs` (entrypoint/CLI) · `cli/src/av/` (antivirus
+engine: `engine`, `rules`, `yara`, `heuristics`, `archive`, `hashdb`, `allowlist`,
+`quarantine`, `filetype`) · `cli/src/scan/` (`scanner` orchestrator, `fingerprint`,
+`vscode`, `magic`, `workflow`, `depbl` detection, `remediate` auto-clean) ·
+`cli/src/watch/` (`watcher` service, `memguard` + `store` memory-bounded scanning) ·
+`sensor.rs` (Windows sensor) · `deps.rs` (malware blocklist) · `update.rs` (OTA) ·
+`telemetry.rs` (dashboard) · `install.rs` (service install) · `notify.rs` (alerts) ·
+`permissions.rs` (macOS access) · `core/src/` (`guard_core`: rule matching, YARA,
+heuristics, native file events) · `release/src/` (`sign-manifest` release signer) ·
+`data/` (AV rules and hashes).
 
 Please keep the project's boundaries: it detects, removes injected payloads with a
 reversible backup, and reports — it does **not** rewrite remote git history,

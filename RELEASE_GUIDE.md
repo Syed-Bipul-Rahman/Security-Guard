@@ -34,10 +34,9 @@ This prints:
 Then **delete `guard-update.key` from disk** (or move it to a vault). Keep one offline backup.
 
 ### 1c. Bake the public key into the source
-Set the default public key to yours in `cli/src/update.rs` (`DEFAULT_PUBKEY`) and in
-`updater.py` (`PUBKEY_HEX`, the reference implementation). The release workflow also
-compiles it in from `GUARD_UPDATE_PUBKEY`, but setting it in source makes local builds
-consistent. Commit that change.
+Set the default public key to yours in `cli/src/update.rs` (`DEFAULT_PUBKEY`). The
+release workflow also compiles it in from `GUARD_UPDATE_PUBKEY`, but setting it in
+source makes local builds consistent. Commit that change.
 
 ---
 
@@ -72,7 +71,7 @@ update swaps atomically and the service restarts into the new version.
 `guard.py`; they now ship the Rust binary under the same asset names. The first such
 release reaches existing installs like any other update: the old build verifies the
 signed manifest, swaps in the Rust binary and the service restarts into it, keeping
-`~/.guard` (snapshot, quarantine, dashboard ID). `tests/test_rust_binary.py` checks this
+`~/.guard` (snapshot, quarantine, dashboard ID). `cli/tests/binary.rs` checks this
 path. The `guard.bak` it leaves is the PyInstaller build, so the rollback below applies.
 Canary that first release.
 
@@ -95,7 +94,7 @@ If the secret key is exposed:
 2. **Transition:** machines still running the old binary trust only the OLD key, so ship
    one release signed with the OLD key that contains a binary carrying the NEW key. After
    the fleet is on it, switch to signing with the new key. (Optionally add dual-key support
-   in `updater.py` to accept either during the window.)
+   in `cli/src/update.rs` to accept either during the window.)
 
 ---
 
