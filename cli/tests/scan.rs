@@ -899,17 +899,18 @@ fn clean_relative_and_restore() {
     let c = Clean::new(infected_repo);
     let mut all = format!("=== clean\n{}", c.state(&c.run(&["clean"], Some(&c.work))));
     // on POSIX the payload is cut through server-link.ts, a link to src/server.ts
-    for target in [
+    for rel in [
         "src/server.ts",
         "server-link.ts",
         "public/fonts/fa-solid-400.woff2",
         ".vscode/tasks.json",
         "nope",
     ] {
-        let target = s(Path::new(target));
+        // as str(Path(target)) gave it: with backslashes on Windows
+        let target = rel.replace('/', std::path::MAIN_SEPARATOR_STR);
         let out = c.run(&["restore", &target], Some(&c.work));
         assert_eq!(out.code, 0, "{}", out.stderr);
-        all.push_str(&format!("=== restore {target}\n{}", c.state(&out)));
+        all.push_str(&format!("=== restore {rel}\n{}", c.state(&out)));
     }
     let original = std::fs::read(c.tmp.join(".src/repo/src/server.ts")).unwrap();
     assert!(
