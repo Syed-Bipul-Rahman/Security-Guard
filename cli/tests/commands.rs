@@ -259,6 +259,10 @@ fn permissions_check() {
             all.push_str(&format!("=== {}\n{}", args.join(" "), out.shown()));
         }
     }
+    // the folders checked are the user's own
+    if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+        all = Norm::new().path(Path::new(&home), "userhome").apply(&all);
+    }
     os_golden("permissions_check", &all);
 }
 
