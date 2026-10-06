@@ -924,7 +924,11 @@ fn restore_by_backup_name() {
     let c = Clean::new(infected_repo);
     c.run(&["clean", "{w}"], None);
     // without symlinks (Windows) the payload is cut from src/server.ts itself
-    let cut = if WINDOWS { "server.ts" } else { "server-link.ts" };
+    let cut = if WINDOWS {
+        "server.ts"
+    } else {
+        "server-link.ts"
+    };
     let name = std::fs::read_dir(c.home.join("quarantine"))
         .unwrap()
         .flatten()
