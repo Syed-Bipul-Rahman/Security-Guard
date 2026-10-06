@@ -183,7 +183,8 @@ def test_python_install_switches_to_rust_binary(channel, tmp_path, monkeypatch, 
     with monkeypatch.context() as m:
         m.setattr(sys, "frozen", True, raising=False)
         m.setattr(sys, "executable", str(py.exe))
-        res = updater.Updater(base_url=base, pubkey_hex=PUBKEY, current_version="1.0.0",
+        # "0" is older than any build, PR dry runs (0.0.0-prN) included
+        res = updater.Updater(base_url=base, pubkey_hex=PUBKEY, current_version="0",
                               guard_home=py.home, log=logs.append).check_and_apply()
     assert res["binary_updated"], logs
     assert py.exe.read_bytes() == rust and py.state()["backup_is_original"]

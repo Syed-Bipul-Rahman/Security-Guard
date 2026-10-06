@@ -140,7 +140,8 @@ jobs:
           GUARD_RS_BIN: ${{ steps.rs.outputs.bin }}
           GUARD_VERSION: ${{ steps.v.outputs.version }}
         run: |
-          python -m pip install --quiet -r requirements-dev.txt
+          # the Python reference needs guard_core for YARA and native file events
+          python -m pip install --quiet -r requirements-dev.txt ./core
           python -m pytest tests/test_rust_binary.py tests/test_rust_commands.py tests/test_rust_av.py tests/test_rust_scan.py tests/test_rust_watch.py --no-cov -p no:cacheprovider -q
 
       - name: Name artifact
