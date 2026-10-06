@@ -232,6 +232,8 @@ def test_snapshot_carries_across_builds(tmp_path, rust_guard):
     ["--nope", "--print-default-config"], ["--print-default-config", "--interval", "-5"],
 ])
 def test_usage(tmp_path, rust_guard, args):
+    if args == ["-hx"] and sys.version_info < (3, 11):
+        pytest.skip("this Python's argparse predates the 3.11 behaviour the binary follows")
     env = {"GUARD_HOME": str(tmp_path / "home")}
     py, rs = run_python("watch", *args, env=env), run_rust(rust_guard, "watch", *args, env=env)
     assert rs.returncode == py.returncode
