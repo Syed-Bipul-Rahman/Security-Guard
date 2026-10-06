@@ -48,3 +48,20 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [build-dependencies]
 flate2 = "1"
+
+# The integration tests (tests/) build fixtures with these; all are already
+# dependencies above, so nothing new is compiled into the binary.
+[dev-dependencies]
+base64 = "0.23.1"
+bzip2 = "0.6"
+flate2 = "1"
+lzma-rust2 = { version = "0.16", default-features = false, features = ["std", "xz", "encoder"] }
+md-5 = "0.11"
+regex = "1"
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+sha2 = "0.11.0"
+tar = { version = "0.4", default-features = false }
+zip = { version = "8", default-features = false, features = ["deflate-flate2", "bzip2", "lzma"] }
+
+[target."cfg(unix)".dev-dependencies]
+libc = "0.2"

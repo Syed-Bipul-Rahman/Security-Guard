@@ -145,6 +145,8 @@ jobs:
           python -m pip install --quiet -r requirements-dev.txt ./core
           cargo build --locked --manifest-path release/Cargo.toml
           python -m pytest tests/test_rust_binary.py tests/test_rust_commands.py tests/test_rust_av.py tests/test_rust_scan.py tests/test_rust_watch.py tests/test_rust_tools.py --no-cov -p no:cacheprovider -q
+          # the binary's own tests, against goldens recorded from guard.py
+          cli/tests/check-against-python.sh
 
       - name: Name artifact
         id: name
