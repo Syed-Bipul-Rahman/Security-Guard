@@ -45,7 +45,7 @@ def run_rust(exe: Path, *args: str, env: dict | None = None, cwd=None) -> subpro
 
 
 def run_python(*args: str, env: dict | None = None, cwd=None) -> subprocess.CompletedProcess:
-    """guard.py, the entrypoint the PyInstaller build packages."""
+    """guard.py, the reference implementation the binary is compared against."""
     return subprocess.run([sys.executable, str(ROOT / "guard.py"), *args], capture_output=True,
                           env=clean_env(env), timeout=120, cwd=cwd)
 

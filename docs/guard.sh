@@ -27,10 +27,6 @@ case "$(uname -m)" in
   arm64|aarch64) arch=arm64 ;;
   *) echo "Unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
-# glibc-only builds; warn on musl (Alpine) where the binary won't run
-if [ "$os" = linux ] && { [ -f /lib/libc.musl-x86_64.so.1 ] || ldd /bin/ls 2>&1 | grep -qi musl; }; then
-  echo "Warning: musl libc detected (e.g. Alpine). The current build is glibc-only and may not run." >&2
-fi
 platform="${os}-${arch}"
 asset="guard-${platform}"
 

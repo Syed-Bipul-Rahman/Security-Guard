@@ -13,15 +13,16 @@ especially new detection signatures for supply-chain malware.
 ## Getting started
 
 1. **Fork** the repo and create a feature branch off `main`.
-2. Guard is a single binary built from the Python modules in the repo. To run it
-   from source:
+2. Guard ships as one static Rust binary (`cli/`). The Python modules in the repo
+   are its reference implementation and run from source:
    ```bash
    python guard.py scan testdata/<fixture>
    ```
-3. To build the standalone binary (per OS; PyInstaller does not cross-compile):
+   A behavior change goes into both, or the side-by-side tests (`tests/test_rust_*.py`)
+   fail.
+3. To build the standalone binary (per OS, with a Rust toolchain):
    ```bash
-   python -m pip install --upgrade pyinstaller certifi
-   pyinstaller build/guard.spec --distpath build/dist --clean --noconfirm
+   bash build/build.sh
    ```
 
 ## Adding a detection signature

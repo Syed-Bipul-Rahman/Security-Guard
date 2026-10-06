@@ -81,7 +81,7 @@ def _signer(*args: str) -> None:
 
 
 def publish(root: Path, base: str, *, version="9.0.0", min_version="0.0.0", plat=None,
-            binary=True, blocklist=b'{"npm": ["evil-pkg"]}') -> None:
+            binary=True, blocklist=b'{"npm": ["evil-pkg"]}', binary_bytes=NEW_BIN) -> None:
     key = root.parent / "signing.key"
     key.write_bytes(SEED)
     args = ["build-and-sign", "--version", version, "--min-version", min_version,
@@ -91,7 +91,7 @@ def publish(root: Path, base: str, *, version="9.0.0", min_version="0.0.0", plat
         args += ["--blocklist", str(root / "malware-blocklist.json")]
     if binary:
         plat = plat or updater.platform_key()
-        (root / f"guard-{plat}").write_bytes(NEW_BIN)
+        (root / f"guard-{plat}").write_bytes(binary_bytes)
         args += ["--binary", f"{plat}=" + str(root / f"guard-{plat}")]
     _signer(*args)
 
@@ -169,6 +169,34 @@ def test_update_applies_blocklist_and_binary(channel, tmp_path, monkeypatch, rus
     assert state["blocklist"] == b'{"npm": ["evil-pkg"]}'
     assert "guard.new" not in state["files"]
     assert logs[-1] == f"updater: binary updated {binary_version(rust_guard)} -> 9.0.0; restart to run it"
+
+
+def test_python_install_switches_to_rust_binary(channel, tmp_path, monkeypatch, rust_guard):
+    """The switch: a release publishes the Rust binary under the same asset name.
+    An installed Python build verifies and installs it through the current
+    channel, and the Rust binary it installed then finds itself current."""
+    root, base = channel
+    rust = rust_guard.read_bytes()
+    publish(root, base, version=binary_version(rust_guard), binary_bytes=rust)
+    py = Install(tmp_path / "py", OLD_BIN)
+    logs: list[str] = []
+    with monkeypatch.context() as m:
+        m.setattr(sys, "frozen", True, raising=False)
+        m.setattr(sys, "executable", str(py.exe))
+        res = updater.Updater(base_url=base, pubkey_hex=PUBKEY, current_version="1.0.0",
+                              guard_home=py.home, log=logs.append).check_and_apply()
+    assert res["binary_updated"], logs
+    assert py.exe.read_bytes() == rust and py.state()["backup_is_original"]
+    env = {"GUARD_HOME": str(py.home), "GUARD_UPDATE_URL": base, "GUARD_UPDATE_PUBKEY": PUBKEY}
+    r = run_rust(py.exe, "version", env=env)
+    assert r.stdout.decode().strip() == f"guard {binary_version(rust_guard)}"
+    files = sorted(p.name for p in py.bindir.iterdir())
+    r = run_rust(py.exe, "update", env=env)
+    assert r.returncode == 0, r.stderr
+    assert ast.literal_eval(r.stdout.decode().splitlines()[-1]) == {
+        "status": "current", "blocklist_updated": False, "binary_updated": False,
+        "offered_version": binary_version(rust_guard)}
+    assert sorted(p.name for p in py.bindir.iterdir()) == files and py.exe.read_bytes() == rust
 
 
 def test_current_blocklist_is_not_refetched(channel, tmp_path, monkeypatch, rust_guard):

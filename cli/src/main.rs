@@ -1,8 +1,8 @@
 //! guard — the single Guard entrypoint, as one static Rust binary.
 //!
-//! Step 4 of the Rust migration ports guard.py command by command; every command
-//! is here now. Until the switch, releases keep shipping the PyInstaller build
-//! and this binary is built and tested next to it on every platform.
+//! This is what releases ship (guard-<os>-<arch>), in place of the PyInstaller
+//! build of guard.py. guard.py and its modules stay in the repo as the reference
+//! implementation: tests/test_rust_*.py run both and compare them on every OS.
 
 mod av;
 mod deps;

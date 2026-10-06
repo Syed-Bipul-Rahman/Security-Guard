@@ -234,16 +234,19 @@ The watcher, `guard scan` and `guard clean` all use this engine automatically.
 
 ## Build from source
 
-The shipped artifact is a single PyInstaller binary; the `.py`/`.sh` files are
-internal modules it carries (you never run them directly). PyInstaller does not
-cross-compile, so build on each target OS:
+The shipped artifact is a single static Rust binary built from `cli/` (on Linux it
+links musl, so it runs on any distro, Alpine included, with no shared libraries).
+Build it on each target OS with a Rust toolchain (rustup.rs):
 
 ```bash
-python -m pip install --upgrade pyinstaller certifi
-python -m pip install ./core                 # Rust core; needs a Rust toolchain (rustup.rs)
-pyinstaller build/guard.spec --distpath build/dist --clean --noconfirm
+bash build/build.sh                          # Linux needs musl-tools first
 ./build/dist/guard version
 ```
+
+The Python modules (`guard.py`, `scanner.py`, `guard_av/`, ...) are the reference
+implementation the binary was ported from. They still run from source
+(`python guard.py ...`), and `tests/test_rust_*.py` run both and require the same
+output on every OS.
 
 Rule matching and the content heuristics run in a Rust extension (`core/`,
 imported as `guard_core`). Without it, `guard_av` falls back to identical pure-Python
