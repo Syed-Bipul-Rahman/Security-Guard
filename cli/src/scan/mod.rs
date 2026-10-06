@@ -67,9 +67,10 @@ fn negative_number(arg: &str) -> bool {
     RE.is_match(arg)
 }
 
-/// argparse for `scanner.py [mode] [path] [--signatures S] [--json]`: the
-/// positionals come from the first run of plain arguments only, and anything
-/// left over is an unrecognized argument.
+/// argparse (Python 3.12, which builds the release) for
+/// `scanner.py [mode] [path] [--signatures S] [--json]`: plain arguments fill
+/// mode then path wherever they appear, and anything left over is an
+/// unrecognized argument.
 fn parse(argv: &[String]) -> Parsed {
     const OPTS: &[&str] = &["--help", "--signatures", "--json"];
     let mut a = Args {
@@ -80,7 +81,6 @@ fn parse(argv: &[String]) -> Parsed {
     };
     let mut positionals: Vec<String> = vec![];
     let mut extras: Vec<String> = vec![];
-    let mut run_open = true; // still in the first run of positionals
     let mut after_dashes = false;
     let mut i = 0;
     while i < argv.len() {
@@ -93,14 +93,13 @@ fn parse(argv: &[String]) -> Parsed {
         let looks_opt =
             !after_dashes && arg.starts_with('-') && arg.len() > 1 && !negative_number(arg);
         if !looks_opt {
-            if run_open && positionals.len() < 2 {
+            if positionals.len() < 2 {
                 positionals.push(arg.clone());
             } else {
                 extras.push(arg.clone());
             }
             continue;
         }
-        run_open = false;
         if arg == "-h" {
             print!("{USAGE}{HELP}");
             return Parsed::Exit(0);
@@ -360,8 +359,10 @@ mod tests {
             run(&["scan-tree", "x", "--j"]),
             Some(("scan-tree".into(), "x".into(), true))
         );
-        // a positional after an option is not the path
-        assert_eq!(run(&["scan-tree", "--json", "x"]), None);
+        assert_eq!(
+            run(&["scan-tree", "--json", "x"]),
+            Some(("scan-tree".into(), "x".into(), true))
+        );
         assert_eq!(run(&["scan-tree", "a", "b"]), None);
         assert_eq!(
             run(&["scan-tree", "--", "--json"]),

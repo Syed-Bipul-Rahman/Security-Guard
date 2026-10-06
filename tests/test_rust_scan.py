@@ -275,6 +275,28 @@ def test_bad_signatures(tmp_path, rust_guard):
         assert rs.stdout == b"" and text(rs.stderr).startswith("guard: ")
 
 
+def _new_argparse() -> bool:
+    """Python 3.12.7+ fills an optional positional that follows an option
+    (`scan --json x` scans x); older versions call x unrecognized. The release
+    is built with 3.12, so the binary does what 3.12 does."""
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("a", nargs="?")
+    ap.add_argument("b", nargs="?")
+    ap.add_argument("--f", action="store_true")
+    import contextlib
+    import io
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return ap.parse_args(["1", "--f", "2"]).b == "2"
+    except SystemExit:
+        return False
+
+
+NEW_ARGPARSE = _new_argparse()
+INTERLEAVED = [["scan", "--json", "x"], ["scan", "--nope", "x", "y"]]
+
+
 @pytest.mark.parametrize("args", [
     ["scan", "-h"], ["open", "--help"], ["scan-git", "--he"], ["scan", "a", "b"], ["scan", "--json", "x"],
     ["scan", "--nope", "x", "y"], ["scan", "--json=1"], ["scan", "--signatures"], ["scan", ".", "--sig"],
@@ -282,6 +304,8 @@ def test_bad_signatures(tmp_path, rust_guard):
     ["scan", "--signatures", "--json"],
 ])
 def test_usage(tmp_path, rust_guard, args):
+    if args in INTERLEAVED and not NEW_ARGPARSE:
+        pytest.skip("this Python's argparse predates the 3.12 behaviour the binary follows")
     same(*both(tmp_path, rust_guard, *args, cwd=tmp_path))
 
 
