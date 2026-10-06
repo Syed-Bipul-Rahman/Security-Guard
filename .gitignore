@@ -3,6 +3,7 @@ build/dist/
 build/work/
 core/target/
 cli/target/
+release/target/
 __pycache__/
 *.pyc
 .DS_Store

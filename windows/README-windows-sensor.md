@@ -17,7 +17,7 @@ kernel-sourced events from user mode:
 | Custom **minifilter / ETW driver** | Our own kernel driver | **Yes** — Tier 2, see below |
 
 **Tier 1 (build/deploy now):** Sysmon (kernel driver, already signed by Microsoft)
-+ our `windows_sensor.py` consuming its event log, plus the System log for reboots.
++ `guard sensor` consuming its event log, plus the System log for reboots.
 This is genuinely kernel-sourced and covers A/B/C today.
 
 **Tier 2 (only if a measured gap forces it):** a custom minifilter or ETW-based
@@ -52,7 +52,7 @@ code change.
 | File | Role |
 |------|------|
 | `sysmon-config.xml` | Narrow Sysmon config tuned to A/B/C (low noise on dev machines) |
-| `windows_sensor.py` | Consumes Sysmon + System-log events, matches signatures, writes `alerts.jsonl` |
+| `guard sensor` | Consumes Sysmon + System-log events, matches signatures, writes `alerts.jsonl` (cli/src/sensor.rs) |
 | `reboot-forensics.ps1` | **Run-now** IR: reboot history + initiators + burst detection |
 | `reboot-cause.ps1` | **Run-now** IR: root-cause of unexpected (Event 41) reboots - crash vs power vs reset |
 | `temp-registry-forensics.ps1` | **Run-now** IR: temp/staging script droppers + registry persistence sweep |
@@ -95,10 +95,11 @@ attribution if Sysmon is already installed. Untested on this build's exact 1074
 property layout — the raw event Message is always included as a fallback, so an
 analyst sees the truth even if an insertion-string index shifted.
 
-`windows_sensor.py` is split into:
-- `WindowsDetector` — **pure logic**, unit-testable on any OS
-  (`python windows_sensor.py --selftest`), and
-- **event sources** (`SysmonSource`, `RebootSource`) — Windows-only, need `pywin32`.
+`guard sensor` is split into:
+- `Detector` — **pure logic**, testable on any OS (`guard sensor --selftest`, or
+  `guard sensor --replay events.jsonl` to match recorded normalized events), and
+- **event sources** (Sysmon, System-log reboots) — Windows-only, subscribed
+  through the Windows Event Log API (no Python or pywin32 needed).
 
 ## Deploy (per Windows workstation, elevated)
 
@@ -107,7 +108,7 @@ analyst sees the truth even if an insertion-string index shifted.
 .\sysmon64.exe -accepteula -i .\sysmon-config.xml
 
 # 2. Install the Guard Windows sensor as an auto-start, keep-alive task
-..\service\windows\install-service.ps1   # point it at windows_sensor.py
+..\service\windows\install-service.ps1 -Command sensor   # runs guard.exe sensor
 
 # 3. Verify
 Get-WinEvent -LogName "Microsoft-Windows-Sysmon/Operational" -MaxEvents 5
@@ -120,7 +121,7 @@ Get-Content $env:USERPROFILE\.guard\alerts.jsonl -Wait
   control produces nothing) — but on **macOS**, so the Windows **event-source
   layer is unvalidated on real hardware**. It must be run + tuned on a Windows
   box: verify the Sysmon XML field names (`Image`, `ParentImage`, `TargetObject`,
-  `Details`, `TargetFilename`) render as expected and adjust `RebootSource`
+  `Details`, `TargetFilename`) render as expected and adjust the reboot
   param-name mapping for 1074 (`param5` = process, varies by Windows build).
 - Sysmon field/param naming shifts across versions — pin a Sysmon version in the
   fleet and validate against it.

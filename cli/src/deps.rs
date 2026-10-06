@@ -793,18 +793,32 @@ pub fn main(args: &[String]) -> Result<u8, String> {
             update(&a)
         }
         "check" => {
-            let bl = feed.join("malware-blocklist.json");
-            // until the first `deps update`, use the snapshot shipped in the binary
-            let data = if bl.exists() {
-                fs::read(&bl).map_err(|e| e.to_string())?
-            } else {
-                bundled_blocklist()
+            // --blocklist FILE: check against another blocklist (check_deps.py's option)
+            let mut given: Option<&str> = None;
+            let mut target: Option<&str> = None;
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                if a == "--blocklist" {
+                    given = Some(it.next().ok_or("--blocklist needs a file")?);
+                } else if let Some(v) = a.strip_prefix("--blocklist=") {
+                    given = Some(v);
+                } else if !a.starts_with('-') && target.is_none() {
+                    target = Some(a);
+                }
+            }
+            let data = match given {
+                Some(p) => fs::read(p).map_err(|e| format!("{p}: {e}"))?,
+                None => {
+                    let bl = feed.join("malware-blocklist.json");
+                    // until the first `deps update`, use the snapshot shipped in the binary
+                    if bl.exists() {
+                        fs::read(&bl).map_err(|e| e.to_string())?
+                    } else {
+                        bundled_blocklist()
+                    }
+                }
             };
-            let target = rest
-                .first()
-                .filter(|t| !t.starts_with('-'))
-                .map_or(".", |t| t.as_str());
-            check(target, &data)
+            check(target.unwrap_or("."), &data)
         }
         other => {
             eprintln!("unknown deps subcommand: {other}");

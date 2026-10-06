@@ -115,10 +115,11 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
 | `guard restore <path>` | undo a clean/quarantine from the backup store |
 | `guard watch` | the always-on filesystem watcher (what the service runs) |
 | `guard triage` | host IR triage (reboots / persistence / recon / flood) |
+| `guard sensor` | Windows endpoint sensor: Sysmon + reboot events to alerts (`--selftest` runs anywhere) |
 | `guard permissions [request]` | check disk access; on macOS raise the "Allow" prompts |
 | `guard notify-test` | show a sample threat popup (verify desktop alerts work) |
 | `guard deps update` | refresh the GitHub malware-package blocklist |
-| `guard deps check <path>` | check a project's dependencies against the blocklist |
+| `guard deps check <path>` | check a project's dependencies against the blocklist (`--blocklist FILE` for another one) |
 | `guard update` | manual OTA check (the service also does this automatically) |
 | `guard telemetry` | send a status report now |
 | `guard install` / `guard uninstall` | set up / remove the auto-start service |
