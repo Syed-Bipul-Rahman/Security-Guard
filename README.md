@@ -172,6 +172,12 @@ looks clean. So Guard fixes the **working tree by content**, never git history:
   matcher** and removes exactly that span — imports and `export default
   defineConfig(...)` are untouched. A source file is **never deleted**; if the
   bounds are ambiguous it refuses and flags for manual review (fail-safe).
+- A file that **is** the payload is quarantined instead: a build config replaced
+  wholesale (the `global.i = "A10-*…"` campaign marker in `postcss.config.mjs`
+  and the same family of vite/next/tailwind configs), a font or image whose body
+  is that payload (including `.eot`, which has no reliable magic bytes), and the
+  local push helpers `temp_auto_push.bat` / `temp_interactive_push.bat`.
+  `guard restore` puts the quarantined file back.
 - After cleaning, commit the fix forward: `git add -A && git commit -m "remove injected payload"`.
   (Don't reset/cherry-pick — the forged history can't be trusted.)
 
