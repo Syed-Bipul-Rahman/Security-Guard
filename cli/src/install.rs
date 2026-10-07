@@ -168,8 +168,17 @@ fn install_macos(uninstall: bool) -> Result<u8, String> {
     if daemon.exists() {
         let _ = fs::remove_file(&daemon);
     }
-    call(&["launchctl", "bootout", &gui, &agent_s])?; // if reloading
-    let rc = call(&["launchctl", "bootstrap", &gui, &agent_s])?;
+    // If reloading: bootout returns before a running agent has stopped, and
+    // bootstrapping it again meanwhile fails ("5: Input/output error"), so retry.
+    call(&["launchctl", "bootout", &gui, &agent_s])?;
+    let mut rc = call(&["launchctl", "bootstrap", &gui, &agent_s])?;
+    for _ in 0..10 {
+        if rc == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        rc = call(&["launchctl", "bootstrap", &gui, &agent_s])?;
+    }
     println!("guard: launch agent installed ({agent_s}); runs '{exe} watch' as {user} at login.");
     println!("guard: on first run an 'Allow' prompt appears for Desktop/Documents/Downloads and removable disks — click Allow.");
     println!("guard: for full internal+removable coverage in one grant, enable Full Disk Access for 'guard' (guard permissions open-settings).");
