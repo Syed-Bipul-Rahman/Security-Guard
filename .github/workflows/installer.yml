@@ -1,0 +1,36 @@
+# The real installers on every push / PR: ./install.sh and the docs/guard.sh
+# one-liner on Linux and macOS, docs/guard.ps1 on Windows, each installing a
+# guard binary built from this commit. A broken install (a missing file, a
+# service that won't start, a watcher that sees nothing) fails here before merge.
+name: installer
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build guard
+        shell: bash
+        run: cargo build --release --locked --manifest-path cli/Cargo.toml
+
+      - name: Install and check (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: .github/installer/check-unix.sh cli/target/release/guard
+
+      - name: Install and check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .github/installer/check-windows.ps1 -Guard cli/target/release/guard.exe

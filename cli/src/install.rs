@@ -3,8 +3,8 @@
 //! Linux: a systemd unit running `guard watch` as root out of /var/lib/guard.
 //! macOS: a per-user LaunchAgent in the GUI session (so TCC can show its Allow
 //! prompts); it seeds ~/.guard itself on first run. Windows: guard.ps1 registers
-//! the scheduled task. The unit and plist text match what guard.py wrote, so an
-//! install from either build looks the same to the OS.
+//! the scheduled task and uninstall deletes it. The unit and plist text match
+//! what guard.py wrote, so an install from either build looks the same to the OS.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -235,6 +235,17 @@ pub fn run(uninstall: bool) -> Result<u8, String> {
         return install_linux(uninstall);
     }
     if cfg!(windows) {
+        if uninstall {
+            // guard.ps1 registered it; the binary stays, as on Linux and macOS
+            call(&["schtasks", "/End", "/TN", "GuardWatcher"])?;
+            let rc = call(&["schtasks", "/Delete", "/TN", "GuardWatcher", "/F"])?;
+            if rc != 0 {
+                eprintln!("guard: could not remove the GuardWatcher task (not installed, or not an elevated prompt)");
+                return Ok(1);
+            }
+            println!("guard: GuardWatcher scheduled task removed");
+            return Ok(0);
+        }
         println!("Windows: install via guard.ps1 (it registers the GuardWatcher scheduled task).");
         return Ok(0);
     }
