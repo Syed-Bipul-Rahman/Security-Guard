@@ -590,12 +590,10 @@ fn usage() {
 
 // ---------------------------------------------------------------- service
 /// A spawned watcher, killed when dropped (a failing test included).
-#[cfg(unix)]
 struct Service {
     child: Option<std::process::Child>,
 }
 
-#[cfg(unix)]
 impl Service {
     fn start(w: &Watch, out: &Path, err: &Path) -> Service {
         let mut cmd = w.cmd(&["--roots", "{w}"]).command();
@@ -607,28 +605,37 @@ impl Service {
         }
     }
 
-    /// SIGTERM, then the exit code (killed after 60 s).
+    /// SIGTERM, then the exit code (killed after 60 s). Windows has no
+    /// signal to send a console-less child, so there it is killed: None.
     fn stop(&mut self) -> Option<i32> {
         let mut c = self.child.take()?;
-        unsafe {
-            libc::kill(c.id() as i32, libc::SIGTERM);
+        #[cfg(windows)]
+        {
+            let _ = c.kill();
+            let _ = c.wait();
+            None
         }
-        let end = Instant::now() + Duration::from_secs(60);
-        loop {
-            if let Some(st) = c.try_wait().unwrap() {
-                return st.code();
+        #[cfg(unix)]
+        {
+            unsafe {
+                libc::kill(c.id() as i32, libc::SIGTERM);
             }
-            if Instant::now() > end {
-                let _ = c.kill();
-                let _ = c.wait();
-                return None;
+            let end = Instant::now() + Duration::from_secs(60);
+            loop {
+                if let Some(st) = c.try_wait().unwrap() {
+                    return st.code();
+                }
+                if Instant::now() > end {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(100));
             }
-            std::thread::sleep(Duration::from_millis(100));
         }
     }
 }
 
-#[cfg(unix)]
 impl Drop for Service {
     fn drop(&mut self) {
         if let Some(mut c) = self.child.take() {
@@ -653,19 +660,16 @@ fn read(p: &Path) -> String {
     fs::read_to_string(p).unwrap_or_default()
 }
 
-#[cfg(unix)]
 #[test]
 fn service_detects_and_stops_native() {
     service_detects_and_stops(true);
 }
 
-#[cfg(unix)]
 #[test]
 fn service_detects_and_stops_polling() {
     service_detects_and_stops(false);
 }
 
-#[cfg(unix)]
 fn service_detects_and_stops(native: bool) {
     let w = Watch::new(
         watched,
@@ -718,9 +722,12 @@ fn service_detects_and_stops(native: bool) {
     );
     std::thread::sleep(Duration::from_millis(1500));
     let code = svc.stop();
-    assert_eq!(code, Some(0), "{}", read(&err));
     let log_text = read(&log);
-    assert!(log_text.contains("watcher stopped"), "{log_text}");
+    // a clean stop needs SIGTERM (see Service::stop)
+    if !WINDOWS {
+        assert_eq!(code, Some(0), "{}", read(&err));
+        assert!(log_text.contains("watcher stopped"), "{log_text}");
+    }
     // the startup lines (memguard's numbers are per process)
     let ts = regex::Regex::new(&format!("(?m)^{ISO_TS}  ")).unwrap();
     let head = ts.replace_all(&log_text, "").into_owned();
