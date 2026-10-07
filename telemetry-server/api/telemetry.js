@@ -1,5 +1,5 @@
 // POST /api/telemetry  — ingest one agent telemetry report.
-// Body: the JSON produced by the Guard agent (telemetry.py build_report()).
+// Body: the JSON produced by the Guard agent (the guard binary's telemetry report, cli/src/telemetry.rs build_report()).
 // Auth: optional shared secret. If INGEST_TOKEN is set, agents must send it as
 //       the X-Guard-Token header (configure the same value on the agent).
 const { getDb } = require('./_db');

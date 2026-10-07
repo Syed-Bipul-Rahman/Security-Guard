@@ -476,3 +476,106 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn engine(max_scan_bytes: u64) -> Engine {
+        let cfg = Config {
+            scan_archives: true,
+            heuristics: true,
+            max_scan_bytes,
+        };
+        Engine::new(cfg, &[]).unwrap()
+    }
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("guard-engine-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn eicar() -> Vec<u8> {
+        // the EICAR test string, reversed so this source never holds it
+        let rev = "*H+H$!ELIF-TSET-SURIVITNA-DRADNATS-RACIE$}7)CC7)^P(45XZP\\4[PA@%P!O5X";
+        rev.chars().rev().collect::<String>().into_bytes()
+    }
+
+    /// test_av_engine.py test_large_file_hashes_whole_file_but_scans_prefix:
+    /// only max_scan_bytes are examined, the hashes cover the whole file.
+    #[test]
+    fn large_file_hashes_whole_file_but_scans_prefix() {
+        let d = tmp("big");
+        let data = [eicar(), b"\n".to_vec(), vec![b'A'; 5000]].concat();
+        let f = d.join("big.bin");
+        fs::write(&f, &data).unwrap();
+        let mut e = engine(1024);
+        let r = e.scan_file(&f);
+        assert_eq!(r.size, data.len() as u64);
+        assert_eq!(r.sha256, hashing::hash_bytes(&data).sha256);
+        let mut e = engine(1024);
+        e.hashdb
+            .add(&hashing::hash_bytes(&data).sha256, "Big.Bad", "malicious")
+            .unwrap();
+        assert_eq!(e.scan_file(&f).threat_name(), "Big.Bad");
+        let r = e.scan_file(&d.join("missing"));
+        assert!(r.error.starts_with("FileNotFoundError"), "{}", r.error);
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// test_archive_limits_configurable: members past the limit are not seen.
+    #[test]
+    fn archive_limits_apply() {
+        let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (n, data) in [("a.txt", b"fine".to_vec()), ("e.com", eicar())] {
+            zw.start_file(n, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut zw, &data).unwrap();
+        }
+        let z = zw.finish().unwrap().into_inner();
+        let mut e = engine(MAX_SCAN_BYTES);
+        assert_eq!(
+            e.scan_bytes(&z, "z.zip", None, None, 0).verdict,
+            Verdict::Malicious
+        );
+        let mut e = engine(MAX_SCAN_BYTES);
+        e.limits.max_members = 1;
+        assert_eq!(
+            e.scan_bytes(&z, "z.zip", None, None, 0).verdict,
+            Verdict::Clean
+        );
+    }
+
+    /// test_lru_eviction_and_disabled: the cache keeps the most recently used.
+    #[test]
+    fn cache_is_lru() {
+        let mut c = Cache::default();
+        let key = |i: usize| (format!("{i}"), "f".to_string());
+        for i in 0..=CACHE_SIZE {
+            c.put(key(i), ScanResult::new(format!("p{i}")));
+            if i == 1 {
+                assert!(c.get(&key(0)).is_some()); // 0 is now newer than 1
+            }
+        }
+        assert_eq!(c.map.len(), CACHE_SIZE);
+        assert!(c.get(&key(1)).is_none());
+        assert!(c.get(&key(0)).is_some());
+    }
+
+    /// test_bundled_rules_are_valid_and_unique.
+    #[test]
+    fn bundled_rules_are_described() {
+        let e = engine(MAX_SCAN_BYTES);
+        assert!(e.rules.len() >= 15);
+        for r in &e.rules.rules {
+            assert!(!r.description.is_empty(), "{}", r.id);
+            assert!(matches!(
+                r.verdict,
+                Verdict::Malicious | Verdict::Suspicious
+            ));
+        }
+        assert!(e.hashdb.len() > 0);
+    }
+}

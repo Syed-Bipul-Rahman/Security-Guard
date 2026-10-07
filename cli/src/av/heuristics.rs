@@ -149,4 +149,33 @@ mod tests {
         assert_eq!(ids("x\u{202e}fdp.exe", "pe"), vec!["name.bidi-override"]);
         assert!(ids("readme.md", "text").is_empty());
     }
+
+    /// The rest of test_av_heuristics.py test_filename_indicators.
+    #[test]
+    fn filename_table() {
+        let none: Vec<String> = vec![];
+        assert_eq!(
+            ids("photo.JPG.js", "javascript"),
+            vec!["name.double-extension"]
+        );
+        assert_eq!(ids("report.final.pdf", "pdf"), none);
+        assert_eq!(ids("archive.tar.gz", "gzip"), none);
+        assert_eq!(
+            ids("invoice          .exe", "pe"),
+            vec!["name.padded-extension"]
+        );
+        assert_eq!(ids("readme          .txt", "text"), none);
+        assert_eq!(ids("doc\u{202e}fdp.exe", "pe"), vec!["name.bidi-override"]);
+        assert_eq!(ids("holiday.jpg", "pe"), vec!["name.masquerade"]);
+        assert_eq!(ids("c:\\users\\x\\setup.exe", "pe"), none);
+        assert_eq!(
+            ids("in\u{200b}voice.exe", "pe"),
+            vec!["name.invisible-char"]
+        );
+        assert_eq!(ids("\u{feff}bom.txt", "text"), none);
+        assert_eq!(ids("noext", "elf"), none);
+        // other types are judged by name only
+        assert!(analyze(b"%PDF", "a.pdf", "pdf").is_empty());
+        assert_eq!(Indicator::new("x", 5, "d").to_string(), "x(+5)");
+    }
 }

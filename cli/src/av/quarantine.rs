@@ -243,4 +243,19 @@ mod tests {
         h.update(0u64.to_be_bytes());
         assert_eq!(out[0], b'A' ^ h.finalize()[0]);
     }
+
+    /// test_av_engine.py TestQuarantine: what cannot be read is not
+    /// quarantined; empty input has an empty keystream.
+    #[test]
+    fn unreadable_source_and_empty_data() {
+        let root = std::env::temp_dir().join(format!("guard-vault-{}", std::process::id()));
+        let v = Vault::new(root.join("v"));
+        let err = v
+            .quarantine(&root.join("missing").to_string_lossy(), "x")
+            .unwrap_err();
+        assert!(err.starts_with("cannot read"), "{err}");
+        assert!(v.list().is_empty());
+        assert!(keystream_xor(b"", &[7u8; 32]).is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
 }

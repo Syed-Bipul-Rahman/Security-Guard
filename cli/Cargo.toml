@@ -1,10 +1,9 @@
 [package]
 name = "guard"
-# Keep in step with guard.py VERSION (tests/test_rust_binary.py checks it).
 # Release builds override it with GUARD_VERSION at compile time.
 version = "2.0.0"
 edition = "2021"
-description = "Guard as one static binary: the Rust port of guard.py (step 4 of the Rust migration)"
+description = "Guard as one static binary"
 license = "MIT"
 publish = false
 
@@ -14,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 # The scan engine: JSON rule matching, YARA (yara-x), content heuristics.
-guard_core = { path = "../core", default-features = false }
+guard_core = { path = "../core" }
 bzip2 = "0.6"
 getrandom = "0.3"
 lzma-rust2 = { version = "0.16", default-features = false, features = ["std", "xz"] }
@@ -48,3 +47,20 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [build-dependencies]
 flate2 = "1"
+
+# The integration tests (tests/) build fixtures with these; all are already
+# dependencies above, so nothing new is compiled into the binary.
+[dev-dependencies]
+base64 = "0.23.1"
+bzip2 = "0.6"
+flate2 = "1"
+lzma-rust2 = { version = "0.16", default-features = false, features = ["std", "xz", "encoder"] }
+md-5 = "0.11"
+regex = "1"
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+sha2 = "0.11.0"
+tar = { version = "0.4", default-features = false }
+zip = { version = "8", default-features = false, features = ["deflate-flate2", "bzip2", "lzma"] }
+
+[target."cfg(unix)".dev-dependencies]
+libc = "0.2"

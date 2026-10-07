@@ -25,8 +25,8 @@ fn main() {
         "malware-blocklist.json.gz",
         Some(b"{}"),
     );
-    gzip_into_out_dir("../guard_av/data/rules.json", "av-rules.json.gz", None);
-    gzip_into_out_dir("../guard_av/data/hashes.json", "av-hashes.json.gz", None);
+    gzip_into_out_dir("../data/av-rules.json", "av-rules.json.gz", None);
+    gzip_into_out_dir("../data/av-hashes.json", "av-hashes.json.gz", None);
     gzip_into_out_dir("../signatures.json", "signatures.json.gz", None);
     gzip_into_out_dir(
         "../linux/guard-triage-linux.sh",

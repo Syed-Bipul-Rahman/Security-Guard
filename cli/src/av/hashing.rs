@@ -78,4 +78,16 @@ mod tests {
         assert_eq!(h.sha1, "a9993e364706816aba3e25717850c26c9cd0d89d");
         assert!(h.sha256.starts_with("ba7816bf"));
     }
+
+    /// test_av_core.py test_hash_bytes_and_file_agree: streaming over more
+    /// than one 1 MiB read.
+    #[test]
+    fn streaming_matches_in_memory() {
+        let data = b"guard".repeat(300_000);
+        let p = std::env::temp_dir().join(format!("guard-hash-{}", std::process::id()));
+        std::fs::write(&p, &data).unwrap();
+        let (a, b) = (super::hash_file(&p).unwrap(), super::hash_bytes(&data));
+        std::fs::remove_file(&p).unwrap();
+        assert_eq!((a.md5, a.sha1, a.sha256), (b.md5, b.sha1, b.sha256));
+    }
 }

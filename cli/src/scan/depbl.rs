@@ -331,4 +331,29 @@ mod tests {
             vec![("foo".into(), "1.2".into()), ("bar".into(), String::new())]
         );
     }
+
+    /// test_legacy_engines.py TestDepBlocklist test_parse_ver / test_in_range.
+    #[test]
+    fn versions_and_ranges_like_dep_blocklist_py() {
+        let v = |s: &str| parse_ver(s).map(|(a, b, c)| format!("{}.{}.{}", a.0, b.0, c.0));
+        assert_eq!(v("1.2.3").as_deref(), Some("1.2.3"));
+        assert_eq!(v("^4.5").as_deref(), Some("4.5.0"));
+        assert_eq!(v("v7").as_deref(), Some("7.0.0"));
+        assert_eq!(v("latest"), None);
+        for (inst, rng, want) in [
+            ("9.9.9", ">= 0", true),
+            ("x", "*", true),
+            ("", "", true),
+            ("latest", "= 1.0.0", false),
+            ("1.1.0", ">= 1.0.0, < 1.2", true),
+            ("1.2.0", ">= 1.0.0, < 1.2", false),
+            ("1.0.0", "~1.0", false),
+            ("1.0.0", "= abc", false),
+            ("2.0.0", "> 1.0.0", true),
+            ("1.0.0", "<= 1.0.0", true),
+            ("1.0.0", "== 1.0.0", true),
+        ] {
+            assert_eq!(in_range(inst, rng), want, "{inst} {rng}");
+        }
+    }
 }

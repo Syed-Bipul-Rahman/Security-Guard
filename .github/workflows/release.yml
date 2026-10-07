@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   test:
-    # never publish a build the test suite / coverage gate rejects
+    # never publish a build the test suite rejects
     uses: ./.github/workflows/tests.yml
 
   build:
@@ -54,8 +54,6 @@ jobs:
       SIGNPATH_ENABLED: ${{ github.event_name != 'pull_request' && secrets.SIGNPATH_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
 
       - name: Resolve version
         id: v
@@ -131,20 +129,16 @@ jobs:
           echo "$out"
           [ "$rc" = 1 ] && echo "$out" | grep -q 'yara: smoke_test' || { echo "YARA smoke scan did not detect the test file"; exit 1; }
 
-      # Each command matches the Python reference implementation on this OS
-      # (including the self-update rename swap on Windows). Releases rely on the
-      # same suite having passed in the PR dry run and the test job above.
-      - name: Test guard against the Python reference
+      # The binary's integration tests (goldens recorded from the Python build
+      # it replaced) run against this exact release binary on its own OS,
+      # including the self-update rename swap on Windows.
+      - name: Test the release binary
         if: github.event_name == 'pull_request'
         shell: bash
         env:
           GUARD_RS_BIN: ${{ steps.rs.outputs.bin }}
           GUARD_VERSION: ${{ steps.v.outputs.version }}
-        run: |
-          # the Python reference needs guard_core for YARA and native file events
-          python -m pip install --quiet -r requirements-dev.txt ./core
-          cargo build --locked --manifest-path release/Cargo.toml
-          python -m pytest tests/test_rust_binary.py tests/test_rust_commands.py tests/test_rust_av.py tests/test_rust_scan.py tests/test_rust_watch.py tests/test_rust_tools.py --no-cov -p no:cacheprovider -q
+        run: cargo test --locked --manifest-path cli/Cargo.toml --tests
 
       - name: Name artifact
         id: name

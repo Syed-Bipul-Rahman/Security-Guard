@@ -1,11 +1,8 @@
 # build artifacts
 build/dist/
-build/work/
 core/target/
 cli/target/
 release/target/
-__pycache__/
-*.pyc
 .DS_Store
 
 # local forensic outputs (contain real host IPs / hostnames / SSH fingerprints)
@@ -30,10 +27,3 @@ manifest.json.sig
 
 # local-only SignPath application worksheet (not published)
 docs/WINDOWS-CODE-SIGNING.md
-.pytest_cache/
-.coverage
-coverage.xml
-htmlcov/
-
-# Rust build output
-core/target/

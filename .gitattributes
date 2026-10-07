@@ -1,0 +1,2 @@
+# goldens are compared byte for byte: keep LF on Windows checkouts too
+cli/tests/golden/** -text

@@ -176,4 +176,38 @@ mod tests {
         assert_eq!(identify(b"hello \xe2\x82", "a"), "text");
         assert_eq!(identify(b"\xff\x00\x01", "a"), "binary");
     }
+
+    /// test_av_core.py test_identify / test_type_groups.
+    #[test]
+    fn identifies_like_filetype_py() {
+        let pe = [b"MZ".as_slice(), &[0u8; 0x3A], &0x40u32.to_le_bytes()].concat();
+        let ustar = [vec![0u8; 257], b"ustar\x0000".to_vec()].concat();
+        let cases: &[(&[u8], &str, &str)] = &[
+            (&pe, "", "pe"),
+            (b"\x7fELF\x02\x01\x01\0\0", "", "elf"),
+            (b"\xcf\xfa\xed\xfe\0\0\0\0\0\0\0\0", "", "macho"),
+            (b"\xca\xfe\xba\xbe", "", "macho-fat"),
+            (b"PK\x03\x04rest", "", "zip"),
+            (b"\x1f\x8b\x08", "", "gzip"),
+            (&ustar, "", "tar"),
+            (b"%PDF-1.7", "", "pdf"),
+            (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "", "ole"),
+            (b"#!/usr/bin/env\n", "", "script"),
+            (b"#!\n", "", "script"),
+            (b"#!/usr/local/bin/node\n", "", "javascript"),
+            (b"Write-Host hi", "a.PS1", "powershell"),
+            (b"plain words", "notes", "text"),
+            (b"", "", "text"),
+            (b"\xff\xfeh\x00i\x00", "", "text"),
+            (b"caf\xc3", "", "text"),
+            (b"\x00\x01\x02\x03binary", "", "binary"),
+            (b"\xc3\x28xxxxxxxxxxxxxxxxxxxx", "", "binary"),
+        ];
+        for (head, name, tag) in cases {
+            assert_eq!(identify(head, name), *tag, "{head:?} {name}");
+        }
+        assert!(is_executable("pe") && !is_executable("zip"));
+        assert!(is_archive("tar") && !is_archive("pe"));
+        assert!(is_script("powershell") && !is_script("text"));
+    }
 }

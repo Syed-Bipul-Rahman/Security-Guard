@@ -1,4 +1,6 @@
-# Test suite + 100% coverage gate + zero-false-positive sweep on every push / PR.
+# Rust tests and the guard binary's integration tests on every push / PR.
+# (detection.rs also scans this repository and the binary itself for false
+# positives.)
 name: tests
 
 on:
@@ -14,36 +16,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-latest, python: "3.10" }
-          - { os: ubuntu-latest, python: "3.12" }
-          - { os: macos-14,      python: "3.12" }
+        os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-python@v5
-        with: { python-version: "${{ matrix.python }}" }
       - uses: dtolnay/rust-toolchain@stable
-      - name: Rust unit tests
-        run: |
-          cargo test --manifest-path core/Cargo.toml
-          cargo test --manifest-path cli/Cargo.toml
-          cargo test --locked --manifest-path release/Cargo.toml
-      # tests/test_rust_*.py run them against the Python code they replace
-      - name: Build the Rust guard binary and the release signer
-        run: |
-          cargo build --locked --manifest-path cli/Cargo.toml
-          cargo build --locked --manifest-path release/Cargo.toml
-      - name: Install test deps + Rust core
-        run: |
-          python -m pip install --quiet -r requirements-dev.txt
-          python -m pip install --quiet ./core
-      - name: Unit + integration + accuracy tests (100% coverage gate)
-        run: python -m pytest --cov --cov-report=term-missing
-      - name: Full false-positive sweep (stdlib + system binaries)
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+      - name: Engine core unit tests
+        run: cargo test --locked --manifest-path core/Cargo.toml
+      - name: Release signer tests
+        run: cargo test --locked --manifest-path release/Cargo.toml
+      # unit tests, then integration tests against goldens recorded from the
+      # Python build the binary replaced (cli/tests/common/mod.rs)
+      - name: guard binary tests
+        run: cargo test --locked --manifest-path cli/Cargo.toml
+      - name: Full false-positive sweep (system binaries + Python stdlib if present)
+        if: matrix.os == 'ubuntu-latest'
         env: { GUARD_FP_FULL: "1" }
-        run: python -m pytest tests/test_detection_accuracy.py -k false_positives -p no:cacheprovider --no-cov
-      - name: Guard scans its own source clean
-        run: python -m guard_av scan . --fail-on-suspicious
+        run: cargo test --locked --manifest-path cli/Cargo.toml --test detection zero_false_positives

@@ -1,0 +1,9 @@
+{
+  "id": "45a54717303adda8fcfdba48e6cfa57c",
+  "original_path": "/tmp/tmp.IJm5ngouzt/w/eicar-crlf.txt",
+  "sha256": "8b3f191819931d1f2cef7289239b5f77c00b079847b9c2636e56854d1e5eff71",
+  "size": 70,
+  "threat": "EICAR-Test-File",
+  "quarantined_at": "2026-10-06T14:50:00.694935+00:00",
+  "key": "a4141fc390e210b79425a40eb4dd04ee0c23d0d1a1e74ae6c6482c9d394ed3f0"
+}
