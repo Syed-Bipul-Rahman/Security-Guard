@@ -71,7 +71,7 @@ update swaps atomically and the service restarts into the new version.
 `guard.py`; they now ship the Rust binary under the same asset names. The first such
 release reaches existing installs like any other update: the old build verifies the
 signed manifest, swaps in the Rust binary and the service restarts into it, keeping
-`~/.guard` (snapshot, quarantine, dashboard ID). `cli/tests/binary.rs` checks this
+`~/.guard` (snapshot, quarantine). `cli/tests/binary.rs` checks this
 path. The `guard.bak` it leaves is the PyInstaller build, so the rollback below applies.
 Canary that first release.
 
