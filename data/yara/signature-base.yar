@@ -1,5 +1,5 @@
 /*
- * 1740 rules selected from https://github.com/Neo23x0/signature-base
+ * 1739 rules selected from https://github.com/Neo23x0/signature-base
  * at commit 94a1c48d7ab499879287ff611dfe7f9c56376030
  * License: DRL-1.1 (see LICENSES.txt next to this file)
  * Modified by Guard: rules were selected, deduplicated and reformatted
@@ -3136,30 +3136,6 @@ rule HKTL_CobaltStrike_Beacon_Strings
 
 	condition:
 		2 of them
-}
-
-rule HKTL_CobaltStrike_Beacon_XOR_Strings
-{
-	meta:
-		description = "Identifies XOR'd strings used in Cobalt Strike Beacon DLL (author: Elastic)"
-		author = "Elastic"
-		reference = "https://www.elastic.co/blog/detecting-cobalt-strike-with-memory-signatures"
-		date = "2021-03-16"
-		modified = "2026-05-26"
-		xor_s1 = "%02d/%02d/%02d %02d:%02d:%02d"
-		xor_s2 = "Started service %s on %s"
-		xor_s3 = "%s as %s\\%s: %d"
-		id = "359160a8-cf1c-58a8-bf7f-c09a8d661308"
-
-	strings:
-		$s1 = "%02d/%02d/%02d %02d:%02d:%02d" xor(0x01-0xff)
-		$s2 = "Started service %s on %s" xor(0x01-0xff)
-		$s3 = "%s as %s\\%s: %d" xor(0x01-0xff)
-		$fp1 = "MalwareRemovalTool" ascii wide
-		$fp2 = "advanced malware removal tool" ascii wide
-
-	condition:
-		2 of ( $s* ) and not 1 of ( $fp* )
 }
 
 rule HKTL_CobaltStrike_Beacon_4_2_Decrypt

@@ -133,7 +133,6 @@ jobs:
         shell: bash
         env:
           GUARD_RS_BIN: ${{ steps.rs.outputs.bin }}
-          GUARD_FP_FULL: "1"  # TEMP: full System32 sweep for the community rules
           GUARD_VERSION: ${{ steps.v.outputs.version }}
         run: |
           # outside the checkout: the detection suite sweeps the repository
