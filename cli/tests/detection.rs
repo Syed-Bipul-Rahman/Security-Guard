@@ -90,7 +90,12 @@ fn scan(tmp: &Tmp, paths: &[PathBuf]) -> Vec<(String, Value)> {
     for chunk in paths.chunks(150) {
         let mut args = vec!["av".to_string(), "scan".into(), "--json".into()];
         args.extend(chunk.iter().map(|p| s(p)));
-        let r = guard(&args).home(&tmp.join("home")).run();
+        // with the bundled community YARA rules: they must not flag the
+        // benign corpora either
+        let r = guard(&args)
+            .home(&tmp.join("home"))
+            .env("GUARD_COMMUNITY_RULES", "1")
+            .run();
         assert!(r.code == 0 || r.code == 1, "{}", r.stderr);
         let start = r
             .stdout

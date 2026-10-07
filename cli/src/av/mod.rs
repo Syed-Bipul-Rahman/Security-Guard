@@ -3,7 +3,7 @@
 //!     guard av scan <path> [<path> ...] [--json] [--quarantine] [--fail-on-suspicious]
 //!                   [--no-archives] [--no-heuristics] [--signatures DIR ...]
 //!     guard av quarantine list | restore <id> [--to PATH] [--overwrite] | delete <id>
-//!     guard av rules [--validate FILE ...]
+//!     guard av rules [--validate FILE ...] [--licenses]
 //!     guard av hash <file> [...]
 //!
 //! Exit codes: 0 clean, 1 malicious found (or suspicious with
@@ -258,6 +258,7 @@ fn cmd_scan(vault: Option<&str>, argv: &[String]) -> Result<u8, String> {
         scan_archives: !a.has("--no-archives"),
         heuristics: !a.has("--no-heuristics"),
         max_scan_bytes: engine::MAX_SCAN_BYTES,
+        community_rules: engine::community_rules_enabled(),
     };
     let mut engine = Engine::new(cfg, &existing_dirs(extra)).map_err(fatal)?;
     let vault = a.has("--quarantine").then(|| vault_for(vault));
@@ -414,7 +415,21 @@ fn validate(f: &str) -> Result<usize, String> {
 }
 
 fn cmd_rules(argv: &[String]) -> Result<u8, String> {
-    let a = parse("guard av rules", argv, &[], &[], Some("--validate"), 0)?;
+    let a = parse(
+        "guard av rules",
+        argv,
+        &["--licenses"],
+        &[],
+        Some("--validate"),
+        0,
+    )?;
+    if a.has("--licenses") {
+        print!(
+            "{}",
+            String::from_utf8_lossy(&engine::gunzip(engine::YARA_LICENSES_GZ))
+        );
+        return Ok(0);
+    }
     let files = a.values("--validate");
     if !files.is_empty() {
         let mut rc = 0;
@@ -434,6 +449,7 @@ fn cmd_rules(argv: &[String]) -> Result<u8, String> {
         scan_archives: true,
         heuristics: true,
         max_scan_bytes: engine::MAX_SCAN_BYTES,
+        community_rules: engine::community_rules_enabled(),
     };
     let engine = Engine::new(cfg, &existing_dirs(vec![home])).map_err(fatal)?;
     for r in &engine.rules.rules {
@@ -450,6 +466,14 @@ fn cmd_rules(argv: &[String]) -> Result<u8, String> {
         engine.yara.len(),
         engine.hashdb.len()
     );
+    if engine.config.community_rules {
+        let sets: Vec<&str> = engine::BUNDLED_YARA.iter().map(|(n, _)| *n).collect();
+        println!(
+            "community YARA rules from {} (licenses: guard av rules --licenses; \
+             GUARD_COMMUNITY_RULES=0 leaves them out)",
+            sets.join(", ")
+        );
+    }
     Ok(0)
 }
 

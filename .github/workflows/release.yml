@@ -15,13 +15,14 @@ on:
     inputs:
       version: { description: "version e.g. 1.1.0", required: true }
   # Dry run: build and smoke-test every platform binary on PRs that touch the
-  # native core, the Rust binary or the packaging, without baking secrets or
+  # native core, the Rust binary, the data built into it or the packaging, without baking secrets or
   # publishing anything.
   pull_request:
     paths:
       - "core/**"
       - "cli/**"
       - "build/**"
+      - "data/**"
       - "release/**"
       - ".github/workflows/release.yml"
 

@@ -67,7 +67,9 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
 ## Features
 
 - **Antivirus engine** — exact hash signatures, 15 high-confidence YARA-style
-  rules, static heuristics (packers, injection APIs, obfuscation, disguised
+  rules, about 2,300 community YARA rules (ReversingLabs, Neo23x0
+  signature-base, ESET, Google GCTI, Airbnb BinaryAlert; see
+  [data/yara](data/yara/README.md)), static heuristics (packers, injection APIs, obfuscation, disguised
   filenames) and bomb-safe zip / tar / gzip / bzip2 / xz scanning. Add your own
   rules, hashes and allowlists without touching code.
 - **Always-on watcher** — detects repo clones, pulls/checkouts, new project dirs,
@@ -105,7 +107,7 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
 | `guard open <path>` | pre-open check — is it safe to open this folder in VS Code? |
 | `guard av scan <path...>` | general antivirus scan: hash DB + YARA-style rules + heuristics + archives (`--json`, `--quarantine`, `--fail-on-suspicious`) |
 | `guard av quarantine list\|restore <id>\|delete <id>` | manage the neutered (encrypted-at-rest) quarantine vault |
-| `guard av rules [--validate FILE]` | list the loaded signatures / validate a custom rule file |
+| `guard av rules [--validate FILE] [--licenses]` | list the loaded signatures / validate a custom rule file / print the bundled rules' licenses |
 | `guard av hash <file>` | print SHA-256 / SHA-1 / MD5 |
 | `guard clean <path>` | **remove** injected malware in place (excise/quarantine), backing up first |
 | `guard restore <path>` | undo a clean/quarantine from the backup store |
@@ -183,7 +185,7 @@ Besides the incident-specific engines, Guard ships a general anti-malware engine
 | Content type ID | identifies PE / ELF / Mach-O / archives / scripts by **bytes**, not extension | — |
 | Allowlist | known-good SHA-256, trusted path globs, disabled rule ids | CLEAN (stops) |
 | Hash DB | exact MD5 / SHA-1 / SHA-256 signatures (JSON or `<hash> <name>` text lists) | MALICIOUS |
-| YARA | Real YARA rules (`*.yar` / `*.yara`, compiled by yara-x in the Rust core, with the `pe`, `elf`, `macho`, `dotnet`, `math`, `hash` modules and more). Drop a rule file into `~/.guard/av/` or a `--signatures` directory. A rule reports SUSPICIOUS unless its meta says `verdict = "malicious"`; `whole_file = true` marks it safe to quarantine; disable one with `yara:<file stem>.<rule>` in an allowlist | MALICIOUS / SUSPICIOUS |
+| YARA | Real YARA rules (`*.yar` / `*.yara`, compiled by yara-x in the Rust core, with the `pe`, `elf`, `macho`, `dotnet`, `math`, `hash` modules and more). Drop a rule file into `~/.guard/av/` or a `--signatures` directory. A rule reports SUSPICIOUS unless its meta says `verdict = "malicious"`; `whole_file = true` marks it safe to quarantine; disable one with `yara:<file stem>.<rule>` in an allowlist. About 2,300 community rules are built in ([data/yara](data/yara/README.md): sources, licenses, how they were picked; `guard av rules --licenses`); they add about 3 s to each engine start, and `GUARD_COMMUNITY_RULES=0` leaves them out | MALICIOUS / SUSPICIOUS |
 | Rules | JSON rules (the original format, kept for compatibility): text (ascii/wide/nocase), hex with `??` / `[n-m]` jumps / `(a\|b)`, regex; boolean conditions (`all`/`any`/`at_least`/`at`/`count`/`filesize`) | MALICIOUS / SUSPICIOUS |
 | Heuristics | PE packers, encrypted executable sections, W+X sections, entry point outside code, process-injection / hollowing / keylogger API sets, ELF LD-preload rootkits, script obfuscation (encoded-blob exec, `_0x` obfuscator, char-code exec), PowerShell encoded/hidden/AMSI tampering, double/RTLO/masquerading filenames | SUSPICIOUS, MALICIOUS only when ≥3 strong independent indicators agree |
 | Archives | recursive zip / tar / gzip / bzip2 / xz, in memory, bomb-safe (depth, member count, size and ratio limits) | per-member verdicts |

@@ -109,6 +109,7 @@ impl Scanner {
                         scan_archives: true,
                         heuristics: true,
                         max_scan_bytes: AV_MAX_SCAN_BYTES,
+                        community_rules: crate::av::engine::community_rules_enabled(),
                     },
                     &[],
                 )

@@ -833,3 +833,64 @@ fn abbreviated_options() {
     assert_eq!(out.code, 1);
     golden(SUITE, "abbreviated_options", &report(&out, &norm(&tmp)));
 }
+
+// ------------------------------------------------- bundled community rules
+#[test]
+fn community_rules_load_and_detect() {
+    let tmp = Tmp::new("community");
+    let f = tmp.join("tool.bin");
+    // built at runtime, so this source never holds the string the rule hunts
+    std::fs::write(&f, format!("xx {}{} yy\n", "mimi", "drv")).unwrap();
+
+    let out = av(&tmp, &["scan", &s(&f)])
+        .env("GUARD_COMMUNITY_RULES", "1")
+        .run();
+    assert_eq!(out.code, 0, "{}", out.stdout); // suspicious only
+    assert!(
+        out.stdout.contains("[SUSPICIOUS]")
+            && out
+                .stdout
+                .contains("yara: hacktool_windows_mimikatz_modules"),
+        "{}",
+        out.stdout
+    );
+    // the Detection Rule License: signature-base hits name the rule's author
+    let rules = std::fs::read_to_string(repo_root().join("data/yara/signature-base.yar")).unwrap();
+    assert!(rules.contains("(author: Florian Roth"));
+
+    // off: the file is clean, and no community rules are listed
+    let off = av(&tmp, &["scan", &s(&f)])
+        .env("GUARD_COMMUNITY_RULES", "0")
+        .run();
+    assert_eq!(off.code, 0);
+    assert!(!off.stdout.contains("SUSPICIOUS"), "{}", off.stdout);
+
+    let listed = av(&tmp, &["rules"]).env("GUARD_COMMUNITY_RULES", "1").run();
+    let n: usize = listed
+        .stdout
+        .lines()
+        .find_map(|l| {
+            l.split(" YARA rule(s)")
+                .next()?
+                .rsplit(", ")
+                .next()?
+                .parse()
+                .ok()
+        })
+        .unwrap_or_else(|| panic!("{}", listed.stdout));
+    assert!(n > 2000, "{n} YARA rules");
+    assert!(listed.stdout.contains(
+        "community YARA rules from binaryalert, eset, gcti, reversinglabs, signature-base"
+    ));
+
+    let lic = av(&tmp, &["rules", "--licenses"]).run();
+    assert_eq!(lic.code, 0);
+    for name in [
+        "Detection Rule License (DRL) 1.1",
+        "Apache License",
+        "ESET spol. s r.o.",
+        "ReversingLabs",
+    ] {
+        assert!(lic.stdout.contains(name), "{name} missing");
+    }
+}
