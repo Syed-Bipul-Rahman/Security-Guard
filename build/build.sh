@@ -7,8 +7,8 @@
 #   bash build/build.sh
 #   -> build/dist/guard   (guard.exe on Windows)   + build/dist/guard.sha256
 #
-# GUARD_VERSION, GUARD_UPDATE_PUBKEY, GUARD_UPDATE_URL, GUARD_TELEMETRY_URL and
-# GUARD_INGEST_TOKEN, when set, are compiled in (CI sets them for releases).
+# GUARD_VERSION, GUARD_UPDATE_PUBKEY and GUARD_UPDATE_URL, when set, are
+# compiled in (CI sets them for releases).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
