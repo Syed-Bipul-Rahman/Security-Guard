@@ -192,9 +192,18 @@ impl Guard {
         } else {
             Stdio::null()
         });
-        let mut child = cmd
-            .spawn()
-            .unwrap_or_else(|e| panic!("cannot run {cmd:?}: {e}"));
+        // A binary a test just wrote can be briefly "busy" (ETXTBSY) while
+        // another test thread's fork still holds the write descriptor; retry.
+        let mut tries = 0;
+        let mut child = loop {
+            match cmd.spawn() {
+                Err(e) if cfg!(unix) && e.raw_os_error() == Some(26) && tries < 50 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                r => break r.unwrap_or_else(|e| panic!("cannot run {cmd:?}: {e}")),
+            }
+        };
         if let Some(data) = &self.stdin {
             use std::io::Write;
             let mut si = child.stdin.take().unwrap();

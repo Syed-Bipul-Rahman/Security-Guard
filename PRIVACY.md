@@ -16,8 +16,8 @@ machine under `GUARD_HOME/quarantine`.
 
 Guard sends **no telemetry**: no status reports, host details, IP addresses or
 detection summaries leave your machine. Versions up to 2.1.0 included an optional
-status report to a dashboard; it has been removed, and once a machine updates it
-stops reporting. Files an older version left in `GUARD_HOME`
+status report to a dashboard; the report and the dashboard have been removed, and
+once a machine updates it stops reporting. Files an older version left in `GUARD_HOME`
 (`telemetry.json`, `telemetry.config.json`, `telemetry-queue.jsonl`) are no
 longer read or sent, and you can delete them.
 
