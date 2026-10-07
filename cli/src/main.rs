@@ -14,7 +14,6 @@ mod pyjson;
 mod pyrepr;
 mod scan;
 mod sensor;
-mod telemetry;
 mod update;
 mod util;
 mod watch;
@@ -50,7 +49,6 @@ Commands in this build:
   guard deps check <path>  check a project's dependencies against the malware blocklist [--blocklist FILE]
   guard install            install Guard as an auto-start service on this machine
   guard uninstall          remove the Guard service + hooks
-  guard telemetry          send one telemetry report now
   guard update             check the signed update channel now (blocklist + binary)
   guard version            print version
 
@@ -173,16 +171,6 @@ fn run(args: &[String]) -> u8 {
         "open" => scan::main("guard-open", rest),
         "clean" | "restore" => scan::remediate_main(cmd, rest),
         "deps" => report(deps::main(rest)),
-        "telemetry" => match telemetry::run_once(&util::guard_home()) {
-            Ok(res) => {
-                println!("{}", pyrepr::repr(&res));
-                0
-            }
-            Err(e) => {
-                eprintln!("telemetry failed: {e}");
-                1
-            }
-        },
         // manual OTA check (the service also does this periodically)
         "update" => match update::Updater::from_env(VERSION).and_then(|up| up.check_and_apply()) {
             Ok(res) => {

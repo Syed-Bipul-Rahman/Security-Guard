@@ -441,7 +441,7 @@ fn version() {
 #[test]
 fn help_and_unknown() {
     // The usage text itself differs on purpose (the binary lists `update`,
-    // `telemetry`, `sensor`, ...), so the golden holds exit codes and the
+    // `sensor`, ...), so the golden holds exit codes and the
     // shape: every help spelling prints the same text to stdout, and an
     // unknown command names itself on stderr, then prints that text.
     let mut shown = String::new();
@@ -457,6 +457,7 @@ fn help_and_unknown() {
         ));
         if reference().is_none() {
             assert!(out.stdout.contains("guard update"), "{}", out.stdout);
+            assert!(!out.stdout.contains("telemetry"), "{}", out.stdout);
         }
     }
     let usage = usage.unwrap();

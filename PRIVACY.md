@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-09-22_
+_Last updated: 2026-10-07_
 
 Guard is an open-source security agent. This policy explains what data the agent
 collects, why, and how to control it.
@@ -12,39 +12,22 @@ remediation happen locally — the files it inspects and the payloads it removes
 **never** transmitted anywhere. Backups of anything Guard cleans stay on your
 machine under `GUARD_HOME/quarantine`.
 
-## Optional telemetry
+## No telemetry
 
-Guard includes an **optional** status-reporting feature so an operator can see the
-health of the machines they administer. When telemetry is enabled, the agent sends
-a small status report to a **configurable endpoint** (which you can point at your
-own self-hosted server, or disable entirely).
+Guard sends **no telemetry**: no status reports, host details, IP addresses or
+detection summaries leave your machine. Versions up to 2.1.0 included an optional
+status report to a dashboard; it has been removed, and once a machine updates it
+stops reporting. Files an older version left in `GUARD_HOME`
+(`telemetry.json`, `telemetry.config.json`, `telemetry-queue.jsonl`) are no
+longer read or sent, and you can delete them.
 
-A report may include:
+## What Guard does contact
 
-- Hostname, operating system and version, and the local account username
-- Agent version and a hashed, MAC-derived machine identifier
-- Local and public IP address (for approximate location during incident response)
-- Whether the machine is clean or has a detection, and a summary of detections
-
-Guard does **not** collect the contents of your source files, keystrokes,
-credentials, or browsing activity.
-
-## Controlling telemetry
-
-- **Change the endpoint:** set the telemetry endpoint in
-  `GUARD_HOME/telemetry.config.json` to your own server.
-- **Disable it:** operators who deploy Guard can turn reporting off in
-  configuration. If you run Guard yourself, you control whether it reports and
-  where.
-
-If you deploy Guard to machines you administer, you are the data controller for any
-telemetry you collect, and you are responsible for informing the people who use
-those machines that this reporting exists.
-
-## Data retention
-
-Telemetry is stored only on the endpoint you configure. The public demo dashboard
-is for demonstration only and stores anonymized, transient status records.
+- **Updates:** Guard downloads its signed update manifest, new binaries and the
+  malware-package blocklist from its update channel. These are plain downloads;
+  Guard sends nothing about your machine with them.
+- **`guard deps update`:** fetches the malware-package list from the GitHub
+  advisory database when you run it.
 
 ## Contact
 

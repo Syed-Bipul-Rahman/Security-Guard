@@ -11,23 +11,12 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
-use crate::{pyjson, telemetry, util, VERSION};
+use crate::{pyjson, util, VERSION};
 
 #[cfg(unix)]
 pub const LAUNCHD_LABEL: &str = "me.syedbipul.guard";
-
-/// Telemetry endpoint/token written into the install config. Empty unless the
-/// release bakes them in (as guard.py's TELEMETRY_URL / INGEST_TOKEN).
-const BAKED_TELEMETRY_URL: &str = match option_env!("GUARD_TELEMETRY_URL") {
-    Some(u) => u,
-    None => "",
-};
-const BAKED_INGEST_TOKEN: &str = match option_env!("GUARD_INGEST_TOKEN") {
-    Some(t) => t,
-    None => "",
-};
 
 /// System paths, under $GUARD_INSTALL_PREFIX when set (tests install into a
 /// scratch directory with it).
@@ -100,25 +89,6 @@ fn write_watch_config(home: &Path) {
     .collect();
     let _ = fs::create_dir_all(home)
         .and_then(|_| write_json(&cfg_path, &json!({"watch_roots": roots})));
-}
-
-/// Write the collector endpoint/token so the machine reports with no manual config.
-fn write_telemetry_config(home: &Path) {
-    let url = std::env::var("GUARD_TELEMETRY_URL").unwrap_or_else(|_| BAKED_TELEMETRY_URL.into());
-    if url.is_empty() {
-        return;
-    }
-    let cfg_path = home.join("telemetry.config.json");
-    if cfg_path.exists() {
-        return;
-    }
-    let mut cfg = Map::new();
-    cfg.insert("endpoint".into(), json!(url));
-    let token = std::env::var("GUARD_INGEST_TOKEN").unwrap_or_else(|_| BAKED_INGEST_TOKEN.into());
-    if !token.is_empty() {
-        cfg.insert("ingest_token".into(), json!(token));
-    }
-    let _ = fs::create_dir_all(home).and_then(|_| write_json(&cfg_path, &Value::Object(cfg)));
 }
 
 /// The path a service unit launches.
@@ -256,8 +226,6 @@ pub fn run(uninstall: bool) -> Result<u8, String> {
         let home = util::service_home();
         write_install_stamp(&home);
         write_watch_config(&home);
-        write_telemetry_config(&home);
-        let _ = telemetry::run_once(&home); // show on the dashboard right away
     }
     #[cfg(unix)]
     if macos {

@@ -67,9 +67,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       # The shipped `guard`: one static Rust binary per platform (cli/). The
-      # release identity (update key + channel, telemetry) and the version are
-      # compiled in; telemetry only overrides the source default when its secret
-      # is set.
+      # release identity (update key + channel) and the version are compiled in.
       - name: Build static guard
         id: rs
         shell: bash
@@ -77,13 +75,9 @@ jobs:
           GUARD_VERSION: ${{ steps.v.outputs.version }}
           PUBKEY: ${{ secrets.GUARD_UPDATE_PUBKEY }}
           UPURL: ${{ secrets.GUARD_UPDATE_URL }}
-          TELURL: ${{ secrets.GUARD_TELEMETRY_URL }}
-          INGEST: ${{ secrets.GUARD_INGEST_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             export GUARD_UPDATE_PUBKEY="$PUBKEY" GUARD_UPDATE_URL="$UPURL"
-            if [ -n "$TELURL" ]; then export GUARD_TELEMETRY_URL="$TELURL"; fi
-            if [ -n "$INGEST" ]; then export GUARD_INGEST_TOKEN="$INGEST"; fi
           fi
           case "${{ matrix.plat }}" in
             linux-x64)     t=x86_64-unknown-linux-musl ;;

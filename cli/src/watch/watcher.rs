@@ -223,7 +223,6 @@ pub struct Watcher {
     repo_debounce_sec: f64,
     repo_scan_times: HashMap<String, f64>,
     repo_dirty: Vec<(String, String)>,
-    telemetry_dirty: bool,
     perm_blocked: HashSet<String>,
     notify_times: HashMap<String, f64>,
     remediate: bool,
@@ -298,7 +297,6 @@ impl Watcher {
             scanner,
             repo_scan_times: HashMap::new(),
             repo_dirty: vec![],
-            telemetry_dirty: false,
             perm_blocked: HashSet::new(),
             notify_times: HashMap::new(),
             memguard,
@@ -338,7 +336,6 @@ impl Watcher {
             let _ = f.write_all(&crate::scan::py::text_bytes(&line));
         }
         self.log(&format!("ALERT [{kind}] {path} \u{2014} {n} finding(s)"));
-        self.telemetry_dirty = true;
         // in remediate mode the caller pops one "neutralized" alert after cleaning
         if !self.remediate {
             self.maybe_notify(path, n);
@@ -451,7 +448,6 @@ impl Watcher {
             return;
         }
         let hint = if cfg!(target_os = "macos") {
-            self.telemetry_dirty = true;
             "grant access: run 'guard permissions request' in your login session, \
              or enable Full Disk Access for guard"
         } else {
@@ -1045,7 +1041,6 @@ impl Watcher {
             blocked.len(),
             pyrepr::repr(&Value::Array(blocked))
         ));
-        self.telemetry_dirty = true;
         if cfg!(target_os = "macos") {
             self.log("requesting access (an Allow prompt should appear)\u{2026}");
             crate::permissions::request(true);
@@ -1086,10 +1081,8 @@ impl Watcher {
             v => as_float(v).unwrap_or(d),
         };
         let update_every = num("update_check_sec", 6.0 * 3600.0);
-        let tel_every = num("telemetry_sec", 3600.0);
         let full_every = num("full_rescan_sec", 300.0);
         let mut last_update = 0.0;
-        let mut last_tel = 0.0;
         while RUNNING.load(Ordering::SeqCst) {
             let pass = if self.native.is_none() {
                 self.poll_once(false).map(|_| ())
@@ -1107,14 +1100,6 @@ impl Watcher {
             };
             if let Err(e) = pass {
                 self.log(&format!("poll error: {e}"));
-            }
-            // telemetry: periodic, or promptly after a new detection
-            if tel_every > 0.0 && (now() - last_tel >= tel_every || self.telemetry_dirty) {
-                last_tel = now();
-                self.telemetry_dirty = false;
-                if let Err(e) = crate::telemetry::run_once(&self.home) {
-                    self.log(&format!("telemetry error: {e}"));
-                }
             }
             // the signed OTA check (blocklist + binary); never fatal
             if update_every > 0.0 && now() - last_update >= update_every {

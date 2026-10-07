@@ -1,4 +1,4 @@
-//! HTTP for the updater, telemetry and the advisory feed (rustls, bundled roots).
+//! HTTP for the updater and the advisory feed (rustls, bundled roots).
 
 use std::time::Duration;
 
@@ -101,19 +101,6 @@ impl Client {
             req = req.header(*k, *v);
         }
         Self::finish(req.call())
-    }
-
-    pub fn post(
-        &self,
-        url: &str,
-        headers: &[(&str, &str)],
-        body: &[u8],
-    ) -> Result<Response, String> {
-        let mut req = self.agent.post(url);
-        for (k, v) in headers {
-            req = req.header(*k, *v);
-        }
-        Self::finish(req.send(body))
     }
 }
 

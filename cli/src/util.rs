@@ -41,7 +41,7 @@ pub fn user_home() -> PathBuf {
     PathBuf::from(".")
 }
 
-/// $GUARD_HOME, else ~/.guard (per-user state: watcher, telemetry, feed).
+/// $GUARD_HOME, else ~/.guard (per-user state: watcher, feed).
 pub fn guard_home() -> PathBuf {
     env::var_os("GUARD_HOME")
         .map(PathBuf::from)
@@ -198,20 +198,6 @@ pub mod unix {
 
     pub fn passwd_name(uid: u32) -> Option<String> {
         from_raw(unsafe { libc::getpwuid(uid) }).map(|p| p.name)
-    }
-
-    pub fn uname() -> (String, String, String) {
-        // (sysname, release, machine)
-        let mut u: libc::utsname = unsafe { std::mem::zeroed() };
-        if unsafe { libc::uname(&mut u) } != 0 {
-            return (String::new(), String::new(), String::new());
-        }
-        let f = |a: &[libc::c_char]| {
-            unsafe { CStr::from_ptr(a.as_ptr()) }
-                .to_string_lossy()
-                .into_owned()
-        };
-        (f(&u.sysname), f(&u.release), f(&u.machine))
     }
 }
 

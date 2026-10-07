@@ -17,13 +17,11 @@ Windows**). It runs always-on and combines two engines:
 It **auto-removes** what it finds — excising injected code while keeping your
 real files, or moving whole-file malware into a neutered quarantine — and **warns
 the user** with a desktop notification, like a consumer antivirus. It
-self-updates over the air and can report status to an optional, self-hostable
-dashboard.
+self-updates over the air and sends no telemetry.
 
 - **Repo:** https://github.com/Syed-Bipul-Rahman/Security-Guard
 - **Releases:** https://github.com/Syed-Bipul-Rahman/Security-Guard/releases
 - **Install site:** https://security.sparktech.agency
-- **Demo dashboard:** https://security-guard-fkt3.vercel.app
 
 ---
 
@@ -89,9 +87,8 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
   (Ed25519-verified, fail-closed, downgrade-protected). No manual step.
 - **Malicious-dependency check** — versions matched against a GitHub-advisory
   malware blocklist (120k+ names).
-- **Optional telemetry** — machines can report install + status (clean or
-  infected) to a **configurable, self-hostable** dashboard endpoint; point it at
-  your own server or leave it off.
+- **Optional telemetry** — machines could report install + status to a dashboard.
+  Removed after v2.1.0: Guard no longer sends any telemetry.
 - **Host IR triage** — reboot/persistence/recon/flood forensics, OS-native.
 - **Kernel telemetry (Windows)** — auto-configures Microsoft Sysmon.
 - **macOS permissions helper** — raises the native "Allow" prompts for Desktop /
@@ -120,7 +117,6 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
 | `guard deps update` | refresh the GitHub malware-package blocklist |
 | `guard deps check <path>` | check a project's dependencies against the blocklist (`--blocklist FILE` for another one) |
 | `guard update` | manual OTA check (the service also does this automatically) |
-| `guard telemetry` | send a status report now |
 | `guard install` / `guard uninstall` | set up / remove the auto-start service |
 | `guard version` | print version |
 
@@ -310,7 +306,7 @@ engine: `engine`, `rules`, `yara`, `heuristics`, `archive`, `hashdb`, `allowlist
 `vscode`, `magic`, `workflow`, `depbl` detection, `remediate` auto-clean) ·
 `cli/src/watch/` (`watcher` service, `memguard` + `store` memory-bounded scanning) ·
 `sensor.rs` (Windows sensor) · `deps.rs` (malware blocklist) · `update.rs` (OTA) ·
-`telemetry.rs` (dashboard) · `install.rs` (service install) · `notify.rs` (alerts) ·
+`install.rs` (service install) · `notify.rs` (alerts) ·
 `permissions.rs` (macOS access) · `core/src/` (`guard_core`: rule matching, YARA,
 heuristics, native file events) · `release/src/` (`sign-manifest` release signer) ·
 `data/` (AV rules and hashes).

@@ -67,8 +67,8 @@ broad-scope GitHub token on the endpoint. Please keep changes within these bound
 `cli/src/scan/` (`scanner` orchestrator, `fingerprint`, `vscode`, `magic`,
 `workflow`, `depbl` detection, `remediate` auto-clean) · `cli/src/watch/` (`watcher`
 service, `memguard` + `store` memory-bounded scanning) · `sensor.rs` (Windows
-sensor) · `deps.rs` (malware blocklist) · `update.rs` (OTA) · `telemetry.rs`
-(dashboard) · `install.rs` (service install) · `notify.rs` (alerts) ·
+sensor) · `deps.rs` (malware blocklist) · `update.rs` (OTA) ·
+`install.rs` (service install) · `notify.rs` (alerts) ·
 `permissions.rs` (macOS access) · `core/src/` (`guard_core`: rule matching, YARA,
 heuristics, native file events) · `release/src/` (`sign-manifest` release signer) ·
 `data/av-rules.json` + `data/av-hashes.json` (AV signatures, compiled into the

@@ -1,4 +1,4 @@
-//! `guard sysmon-config`, `triage`, `notify-test`, `permissions`, `telemetry`,
+//! `guard sysmon-config`, `triage`, `notify-test`, `permissions`,
 //! `install` / `uninstall` and `deps`, checked against goldens recorded from
 //! guard.py and the Python tools it wraps. Was tests/test_rust_commands.py,
 //! which ran both builds side by side with OS tools (systemctl, launchctl,
@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 const SUITE: &str = "commands";
 
-/// Lookups that would leave the machine (api.ipify.org) fail fast instead.
+/// Lookups that would leave the machine fail fast instead.
 fn no_network(g: Guard) -> Guard {
     g.env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env("https_proxy", "http://127.0.0.1:9")
@@ -274,182 +274,6 @@ fn permissions_request_elsewhere_is_a_noop() {
     os_golden("permissions_request_elsewhere_is_a_noop", &out.shown());
 }
 
-// ---------------------------------------------------------------- telemetry
-fn alerts() -> String {
-    let lines = [
-        json!({"ts": "t1", "severity": "critical", "rule": "dropper.fonts", "kind": "file", "path": "/p/a.woff2"}),
-        json!({"ts": "t2", "severity": "high", "kind": "workflow", "summary": "\u{e9}vil workflow"}),
-        json!({"ts": "t3", "severity": "critical", "rule": "dropper.fonts", "kind": "file", "summary": ""}),
-    ];
-    let mut out: String = lines.iter().map(|l| format!("{l}\n")).collect();
-    out.push_str("not json\n");
-    out
-}
-
-fn telemetry_home(home: &Path, server: &Server, public_ip_lookup: Option<&str>) {
-    write(&home.join("alerts.jsonl"), alerts());
-    write(
-        &home.join("install.json"),
-        json!({"installed_by": "dev", "version": "1.9.0"}).to_string(),
-    );
-    let ip = public_ip_lookup
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("{}/ip", server.url));
-    write(
-        &home.join("telemetry.config.json"),
-        json!({"endpoint": format!("{}/api/telemetry", server.url), "ingest_token": "tok-123",
-               "public_ip_lookup": ip})
-        .to_string(),
-    );
-}
-
-fn keys(v: &Value) -> String {
-    v.as_object()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-#[test]
-fn telemetry_report() {
-    let tmp = Tmp::new("telemetry");
-    let server = Server::new();
-    server.route("/ip", 200, &[], " 203.0.113.7\n");
-    let home = tmp.join("home");
-    telemetry_home(&home, &server, None);
-    let out = no_network(g(&["telemetry"]).home(&home)).run();
-    assert_eq!(out.code, 0, "{}", out.stderr);
-    assert_eq!(out.stdout, "{'status': 'sent', 'http': 200}\n");
-    let local_text = read(&home.join("telemetry.json"));
-    let local = parse_json(&local_text);
-
-    let posts = server.posts();
-    assert_eq!(posts.len(), 1);
-    let (path, h, body) = &posts[0];
-    assert_eq!(path, "/api/telemetry");
-    assert_eq!(h["x-guard-token"], "tok-123");
-    assert_eq!(h["content-type"], "application/json");
-    assert_eq!(h["user-agent"], "guard-telemetry");
-    let rep: Value = serde_json::from_slice(body).unwrap();
-    assert_eq!(rep, local);
-    assert_eq!(keys(&rep), "schema,ts,host,events");
-    assert_eq!(rep["events"]["how"], json!(["dropper.fonts", "workflow"]));
-    assert!(rep["events"]["infected"].as_bool().unwrap_or(false));
-    let ts = rep["ts"].as_str().unwrap();
-    assert!(
-        regex::Regex::new(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{6})?\+00:00$")
-            .unwrap()
-            .is_match(ts),
-        "{ts}"
-    );
-    let host = &rep["host"];
-    assert_eq!(host["public_ip"], "203.0.113.7");
-    let id = host["machine_id"].as_str().unwrap();
-    assert!(
-        id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit()),
-        "{id}"
-    );
-    // the local copy is written as Python's json.dump(indent=2) wrote it
-    // (in text mode, so with CRLF on Windows)
-    let local_text = local_text.replace("\r\n", "\n");
-    assert!(local_text.contains("\\u00e9vil"), "{local_text}");
-    assert!(
-        local_text.starts_with("{\n  \"schema\": \"guard-telemetry/1\","),
-        "{local_text}"
-    );
-
-    // the machine-specific fields are masked; agent_version, public_ip and
-    // install are recorded
-    let mut shown = rep.clone();
-    shown["ts"] = json!("<ts>");
-    for k in [
-        "hostname",
-        "os",
-        "os_version",
-        "username",
-        "machine_id",
-        "local_ips",
-    ] {
-        assert!(!host[k].is_null(), "{k}");
-    }
-    // (the Python test did not compare the other host fields, e.g. os_detail)
-    for k in host.as_object().unwrap().keys() {
-        if !["agent_version", "public_ip", "install"].contains(&k.as_str()) {
-            shown["host"][k] = json!(format!("<{k}>"));
-        }
-    }
-    golden(
-        SUITE,
-        "telemetry_report",
-        &format!(
-            "{}--- report keys\n{}\n--- host keys\n{}\n--- report\n{}",
-            out.shown_all(),
-            keys(&rep),
-            keys(host),
-            canon_json(&shown)
-        ),
-    );
-}
-
-/// A host keeps the id it already reported under (telemetry.json from an
-/// earlier run, possibly by the Python build). Python always re-derived it from
-/// the MAC, so this is the binary's behaviour only.
-#[test]
-fn telemetry_keeps_the_reported_machine_id() {
-    if reference().is_some() {
-        return;
-    }
-    let tmp = Tmp::new("telemetry-id");
-    let server = Server::new();
-    let home = tmp.join("home");
-    telemetry_home(&home, &server, Some(""));
-    write(
-        &home.join("telemetry.json"),
-        json!({"schema": "guard-telemetry/1", "host": {"machine_id": "0123456789abcdef"}})
-            .to_string(),
-    );
-    let out = no_network(g(&["telemetry"]).home(&home)).run();
-    assert_eq!(out.code, 0, "{}", out.stderr);
-    let posts = server.posts();
-    let rep: Value = serde_json::from_slice(&posts[0].2).unwrap();
-    assert_eq!(rep["host"]["machine_id"], "0123456789abcdef");
-}
-
-#[test]
-fn telemetry_failures_queue_and_local_only() {
-    let tmp = Tmp::new("telemetry-fail");
-    let server = Server::new();
-    server.route("POST /api/telemetry", 500, &[], "boom");
-    let home = tmp.join("home");
-    telemetry_home(&home, &server, Some(""));
-    let out = no_network(g(&["telemetry"]).home(&home)).run();
-    assert_eq!(out.code, 0, "{}", out.stderr);
-    // the error text differs between the builds; only its presence matters
-    assert!(
-        out.stdout.starts_with("{'status': 'queued', 'error': '") && out.stdout.len() > 40,
-        "{}",
-        out.stdout
-    );
-    let queued = read(&home.join("telemetry-queue.jsonl"));
-    let lines: Vec<&str> = queued.lines().collect();
-    assert_eq!(lines.len(), 1);
-    assert_eq!(parse_json(lines[0])["schema"], "guard-telemetry/1");
-
-    write(
-        &home.join("telemetry.config.json"),
-        json!({"endpoint": ""}).to_string(),
-    );
-    let out = no_network(g(&["telemetry"]).home(&home)).run();
-    assert_eq!(out.stdout, "{'status': 'local-only'}\n");
-    golden(
-        SUITE,
-        "telemetry_failures_queue_and_local_only",
-        &out.shown_all(),
-    );
-}
-
 // ------------------------------------------------------- install / uninstall
 /// guard.py with its system paths moved under $GUARD_INSTALL_PREFIX (the
 /// binary honours that variable itself) and the service exe set to $FAKE_EXE.
@@ -481,6 +305,7 @@ fn install(base: &Path, server: &Server, sudo_user: &str, cmd: &str) -> (Out, St
         .env("SUDO_USER", sudo_user)
         .env("FAKE_EXE", bin())
         .env("ROOT", repo_root())
+        // what older releases read for telemetry: now ignored, nothing is sent
         .env(
             "GUARD_TELEMETRY_URL",
             format!("{}/api/telemetry", server.url),
@@ -490,6 +315,15 @@ fn install(base: &Path, server: &Server, sudo_user: &str, cmd: &str) -> (Out, St
     let calls = std::fs::read_to_string(base.join("calls")).unwrap_or_default();
     std::fs::remove_file(base.join("calls")).ok();
     (out, calls)
+}
+
+fn keys(v: &Value) -> String {
+    v.as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// The user's home directory from /etc/passwd, as the watch roots spell it.
@@ -555,21 +389,9 @@ fn install_and_uninstall() {
             "--- watcher.config.json\n{}",
             canon_json(&json!({"watch_roots": shown}))
         ));
-        let tc_text = read(&home.join("telemetry.config.json"));
-        let tc = parse_json(&tc_text);
-        assert_eq!(tc["ingest_token"], "tok-9");
-        all.push_str(&format!(
-            "--- telemetry.config.json\n{}\n",
-            tc_text.replace(&server.url, "<server>")
-        ));
-        // and it reported in once, right away
-        let tokens: Vec<String> = server
-            .posts()
-            .iter()
-            .filter(|(p, _, _)| p == "/api/telemetry")
-            .map(|(_, h, _)| h["x-guard-token"].clone())
-            .collect();
-        assert_eq!(tokens, ["tok-9"]);
+        // no telemetry: install writes no collector config and sends nothing
+        assert!(!home.join("telemetry.config.json").exists());
+        assert!(server.posts().is_empty());
     }
 
     let (out, calls) = install(&base, &server, user, "uninstall");
@@ -623,9 +445,7 @@ fn install_without_root() {
 #[test]
 fn install_on_windows_points_at_guard_ps1() {
     let tmp = Tmp::new("install-win");
-    let out = no_network(g(&["install"]).home(&tmp.join("home")))
-        .env("GUARD_TELEMETRY_URL", "")
-        .run();
+    let out = no_network(g(&["install"]).home(&tmp.join("home"))).run();
     assert_eq!(out.code, 0);
     assert_eq!(
         out.stdout,
