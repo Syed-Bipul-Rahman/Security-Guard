@@ -722,7 +722,8 @@ fn service_detects_and_stops(native: bool) {
     );
     std::thread::sleep(Duration::from_millis(1500));
     let code = svc.stop();
-    let log_text = read(&log);
+    // the log is written in text mode: CRLF on Windows
+    let log_text = read(&log).replace("\r\n", "\n");
     // a clean stop needs SIGTERM (see Service::stop)
     if !WINDOWS {
         assert_eq!(code, Some(0), "{}", read(&err));
