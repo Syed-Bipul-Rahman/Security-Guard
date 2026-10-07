@@ -572,6 +572,101 @@ fn python_install_switches_to_rust_binary() {
     );
 }
 
+/// A real published release (GUARD_PREVIOUS_RELEASE, its binary for this
+/// platform, which the release dry run downloads) updates itself to this
+/// build through a signed channel, and this build carries on from the home it
+/// left: it finds itself current and its watcher keeps the old snapshot, so
+/// only a new drop is an event. Skipped when the variable is unset.
+#[test]
+fn previous_release_updates_to_this_build() {
+    let Some(prev) = std::env::var_os("GUARD_PREVIOUS_RELEASE").filter(|v| !v.is_empty()) else {
+        eprintln!("skipped: GUARD_PREVIOUS_RELEASE is not set");
+        return;
+    };
+    // a relative path is from the repository root, as CI passes it
+    let prev = repo_root().join(prev);
+    let tmp = Tmp::new("previous");
+    let ch = Channel::new(&tmp);
+    let inst = Install::with_bytes(&tmp.join("inst"), &fs::read(&prev).unwrap());
+    let work = tmp.join("work");
+    write(&work.join("app.js"), "module.exports = 1;\n");
+    write(
+        &inst.home.join("watcher.config.json"),
+        r#"{"notify": false, "telemetry_sec": 0, "update_check_sec": 0}"#,
+    );
+    let run = |args: &[&str]| {
+        let out = guard(args)
+            .exe(&inst.exe)
+            .home(&inst.home)
+            .env("GUARD_UPDATE_URL", ch.base())
+            .env("GUARD_UPDATE_PUBKEY", pubkey())
+            .run();
+        assert_eq!(out.code, 0, "guard {args:?}\n{}", out.shown_all());
+        out
+    };
+    let watch = || run(&["watch", "--once", "--roots", &s(&work)]);
+    let old = run(&["version"]);
+    // the old build's watcher records its snapshot
+    watch();
+    // offered above any release, so the old build takes it
+    let rust = fs::read(bin()).unwrap();
+    publish(
+        &ch,
+        Publish {
+            version: "999.0.0",
+            binary_bytes: &rust,
+            ..Default::default()
+        },
+    );
+    let out = run(&["update"]);
+    assert_eq!(res_field(&out, "binary_updated"), "True", "{}", out.stdout);
+    assert!(fs::read(&inst.exe).unwrap() == rust && inst.backup_is_original());
+    // the channel now offers this build's own version
+    let cur = current();
+    publish(
+        &ch,
+        Publish {
+            version: cur,
+            binary_bytes: &rust,
+            ..Default::default()
+        },
+    );
+    let ver = run(&["version"]);
+    assert_eq!(
+        ver.stdout.trim(),
+        format!("guard {cur}"),
+        "was {}",
+        old.stdout
+    );
+    let upd = run(&["update"]);
+    assert_eq!(res_field(&upd, "status"), "'current'", "{}", upd.stdout);
+    assert_eq!(res_field(&upd, "binary_updated"), "False");
+    assert!(fs::read(&inst.exe).unwrap() == rust);
+    if WINDOWS {
+        // the rename-swap's leftover goes on this build's first start
+        assert!(
+            !inst.bindir.join("guard.old.exe").exists(),
+            "{:?}",
+            inst.names()
+        );
+    }
+    // the snapshot carried over: the one new file is the only event, and it alerts
+    write(&work.join("dropped.js"), concat!("eval(proxy", "Info)\n"));
+    let out = watch();
+    assert!(
+        out.stdout.contains("--once complete: 1 event(s) handled"),
+        "{}",
+        out.shown_all()
+    );
+    let alerts = fs::read_to_string(inst.home.join("alerts.jsonl")).unwrap_or_default();
+    let alerts: Vec<&str> = alerts.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        alerts.len() == 1 && alerts[0].contains("dropped.js"),
+        "{alerts:?}\n{}",
+        out.shown_all()
+    );
+}
+
 #[test]
 fn current_blocklist_is_not_refetched() {
     let tmp = Tmp::new("current");

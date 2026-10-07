@@ -131,14 +131,23 @@ jobs:
 
       # The binary's integration tests (goldens recorded from the Python build
       # it replaced) run against this exact release binary on its own OS,
-      # including the self-update rename swap on Windows.
+      # including the self-update rename swap on Windows, the watcher's native
+      # file events, and the latest published release updating itself to it.
       - name: Test the release binary
         if: github.event_name == 'pull_request'
         shell: bash
         env:
           GUARD_RS_BIN: ${{ steps.rs.outputs.bin }}
           GUARD_VERSION: ${{ steps.v.outputs.version }}
-        run: cargo test --locked --manifest-path cli/Cargo.toml --tests
+        run: |
+          # outside the checkout: the detection suite sweeps the repository
+          a="guard-${{ matrix.plat }}"; case "$a" in *windows*) a="$a.exe" ;; esac
+          prev="$RUNNER_TEMP/previous-$a"
+          curl -fsSL --retry 3 -o "$prev" \
+            "https://github.com/${{ github.repository }}/releases/latest/download/$a"
+          chmod +x "$prev"
+          export GUARD_PREVIOUS_RELEASE="$prev"
+          cargo test --locked --manifest-path cli/Cargo.toml --tests
 
       - name: Name artifact
         id: name
