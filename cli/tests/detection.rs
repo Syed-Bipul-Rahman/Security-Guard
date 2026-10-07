@@ -86,8 +86,21 @@ fn benign() -> Vec<(&'static str, Vec<u8>)> {
 /// `guard av scan --json` over `paths`: file name -> result object.
 fn scan(tmp: &Tmp, paths: &[PathBuf]) -> Vec<(String, Value)> {
     let mut out = Vec::new();
-    // in batches, under Windows' command-line limit
-    for chunk in paths.chunks(150) {
+    // in batches of up to 150 files, under Windows' 32K command-line limit
+    let mut chunks: Vec<&[PathBuf]> = Vec::new();
+    let (mut start, mut len) = (0, 0);
+    for (i, p) in paths.iter().enumerate() {
+        let n = p.as_os_str().len() + 3;
+        if i > start && (i - start == 150 || len + n > 24_000) {
+            chunks.push(&paths[start..i]);
+            (start, len) = (i, 0);
+        }
+        len += n;
+    }
+    if start < paths.len() {
+        chunks.push(&paths[start..]);
+    }
+    for chunk in chunks {
         let mut args = vec!["av".to_string(), "scan".into(), "--json".into()];
         args.extend(chunk.iter().map(|p| s(p)));
         // with the bundled community YARA rules: they must not flag the
