@@ -347,6 +347,12 @@ victim's git identity — which is why one attack shows up across dozens of
 developers and repos: it re-infects on every folder open. **The endpoint is the
 vector — hence Guard.**
 
+A later wave (issue #24) appends a javascript-obfuscator `_0x` loader to the last
+line of real configs (`jest.config.js`, `eslint.config.js`, `babel.config.js`),
+pushed off-screen by hundreds of spaces and tagged with a short campaign marker,
+and plants a base64 C2 URL in `.env`. Guard flags every marker variant, and
+`guard clean` cuts the loader off and keeps the config.
+
 ---
 
 ## License

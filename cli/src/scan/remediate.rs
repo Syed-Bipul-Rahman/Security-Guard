@@ -271,6 +271,62 @@ pub fn strip_malicious_iife(text: &str) -> (String, Vec<String>) {
     (BLANKS.replace_all(&out, "\n\n").into_owned(), removed)
 }
 
+/// Bootstrap marker of the `_0x` loader wave (issue #24), e.g. a
+/// `global['!']`, `global["!"]` or `global.i` assignment of a short campaign
+/// tag such as 9-6600 or A10-1300.
+static LOADER_MARKER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\bglobal(?:\['!'\]|\["!"\]|\.i)\s*=\s*['"]A?\d{1,3}(?:-[0-9*]{1,6}){0,3}['"]"#)
+        .unwrap()
+});
+
+/// Whitespace the loader is pushed past, so it sits off-screen in an editor.
+const LOADER_PAD: usize = 64;
+
+#[derive(Debug, PartialEq)]
+pub enum LoaderFix {
+    /// No loader marker.
+    None,
+    /// The marker is the first thing in the file: the whole file is the loader.
+    Whole,
+    /// The real file with the padded loader cut off its last line.
+    Cut(String),
+    /// A marker in a place this can't cut safely.
+    Unsafe,
+}
+
+/// Find the `_0x` loader appended after a long run of spaces on the last line
+/// of a real config file, and the file without it.
+pub fn strip_padded_loader(text: &str) -> LoaderFix {
+    let Some(m) = LOADER_MARKER.find(text) else {
+        return LoaderFix::None;
+    };
+    let head = &text[..m.start()];
+    if head.trim_start_matches('\u{feff}').trim().is_empty() {
+        return LoaderFix::Whole;
+    }
+    let real = head.trim_end_matches([' ', '\t']);
+    let tail = &text[m.start()..];
+    if head.len() - real.len() < LOADER_PAD
+        || real.ends_with(['\n', '\r'])
+        || tail.trim_end().contains('\n')
+        || !tail.contains("_0x")
+    {
+        return LoaderFix::Unsafe;
+    }
+    let nl = if text.ends_with("\r\n") {
+        "\r\n"
+    } else if text.ends_with('\n') {
+        "\n"
+    } else {
+        ""
+    };
+    let new = format!("{real}{nl}");
+    if LOADER_MARKER.is_match(&new) || !brackets_balanced(new.as_bytes()) {
+        return LoaderFix::Unsafe;
+    }
+    LoaderFix::Cut(new)
+}
+
 // ---------------------------------------------------------------------------
 // tolerant JSONC (string-aware)
 // ---------------------------------------------------------------------------
@@ -468,6 +524,44 @@ impl Remediator {
         ))
     }
 
+    fn strip_loader(&self, path: &str) -> Result<Option<Value>, String> {
+        let Ok(text) = py::read_text(Path::new(path)) else {
+            return Ok(None);
+        };
+        match strip_padded_loader(&text) {
+            LoaderFix::None => Ok(None),
+            LoaderFix::Whole => self
+                .quarantine_file(path, "whole-file _0x loader")
+                .map(Some),
+            LoaderFix::Unsafe => {
+                self.log(&format!(
+                    "remediate: refusing to edit {path} (loader bounds unclear) — left for manual review"
+                ));
+                Ok(Some(json!({"action": "manual", "path": path,
+                    "note": "_0x loader marker found but safe bounds unclear; manual review"})))
+            }
+            LoaderFix::Cut(new) => {
+                let (backup, before) = self.backup(path)?;
+                py::write_text(Path::new(path), &new).map_err(|e| pystr::os_error(&e, path))?;
+                let after = py::sha256_hex(new.as_bytes());
+                self.record(
+                    "neutralize",
+                    path,
+                    Some(&backup),
+                    json!(before),
+                    json!(after),
+                    "removed padded _0x loader",
+                );
+                self.log(&format!(
+                    "remediate: cut padded _0x loader from {path} (kept the real code)"
+                ));
+                Ok(Some(
+                    json!({"action": "neutralize", "path": path, "blocks": 1, "backup": backup.to_string_lossy()}),
+                ))
+            }
+        }
+    }
+
     fn write_json(&self, path: &str, data: &Value) -> Result<String, String> {
         let new = format!("{}\n", pyjson::dumps(data, Some(2), false));
         py::write_text(Path::new(path), &new).map_err(|e| pystr::os_error(&e, path))?;
@@ -584,6 +678,9 @@ impl Remediator {
         }
         if SCRIPT_EXTS.contains(&pystr::suffix(&path).to_lowercase().as_str()) {
             if let Some(r) = self.neutralize_js(&path)? {
+                return Ok(r);
+            }
+            if let Some(r) = self.strip_loader(&path)? {
                 return Ok(r);
             }
         }
@@ -857,6 +954,52 @@ mod tests {
         assert!(iife_is_malicious("eval(atob('x'))") && !iife_is_malicious("eval(1)"));
         let src2 = format!("z; (async () => {{ {EVAL} }})() ;tail");
         assert_eq!(strip_malicious_iife(&src2).0, "z; ;tail");
+    }
+
+    // split so this source never holds the markers the signatures hunt for
+    const BANG: &str = concat!("glo", "bal['!']='9-6600'");
+    const GI: &str = concat!("glo", "bal.i=\"A10-1300\"");
+    const LOADER: &str = ";(function(_0x1a2b3c,_0x4d5e6f){return void 0;}(_0x7a8b9c,0x1));function _0x7a8b9c(){return [];}";
+
+    #[test]
+    fn padded_loader_cases() {
+        let pad = " ".repeat(200);
+        let real = "module.exports = { testEnvironment: 'node' };";
+        for (marker, nl) in [(BANG, "\n"), (GI, "\r\n"), (BANG, "")] {
+            let src = format!("// jest\n{real}{pad}{marker}{LOADER}{nl}");
+            assert_eq!(
+                strip_padded_loader(&src),
+                LoaderFix::Cut(format!("// jest\n{real}{nl}")),
+                "{marker:?} {nl:?}"
+            );
+        }
+        // the marker opens the file: the whole file is the loader
+        assert_eq!(
+            strip_padded_loader(&format!("{BANG}{LOADER}\n")),
+            LoaderFix::Whole
+        );
+        assert_eq!(
+            strip_padded_loader(&format!("\n  {GI}{LOADER}")),
+            LoaderFix::Whole
+        );
+        for src in [
+            format!("{real} {BANG}{LOADER}\n"),              // no pad
+            format!("{real}{pad}{BANG}{LOADER}\nmore();\n"), // code after it
+            format!("{real}\n{pad}{BANG}{LOADER}\n"),        // pad on its own line
+            format!("{real}{pad}{BANG};var x = 1;\n"),       // no _0x loader
+            format!("f({pad}{BANG}{LOADER}\n"),              // cut leaves f( open
+        ] {
+            assert_eq!(strip_padded_loader(&src), LoaderFix::Unsafe, "{src}");
+        }
+        for src in [
+            real.to_string(),
+            concat!("glo", "bal['!'] = fn;").to_string(),
+            concat!("glo", "bal['!!']='9-6600';").to_string(),
+            concat!("glo", "bal.id=\"A9-0646-1\";").to_string(),
+            concat!("glo", "balThis.version=\"10-1300\";").to_string(),
+        ] {
+            assert_eq!(strip_padded_loader(&src), LoaderFix::None, "{src}");
+        }
     }
 
     #[test]
