@@ -86,7 +86,8 @@ check_preinstalled() {   # <sudo or ""> <guard home>
         fi
         echo "first-start scan alerted on $f"
     done
-    $as grep -q "initial scan complete" "$home/watcher.log" || fail "no initial scan in $home/watcher.log"
+    wait_for 300 "the initial scan to finish ($home/watcher.log)" \
+        $as grep -q "initial scan complete" "$home/watcher.log"
 }
 wait_for_alert() {
     for _ in $(seq 120); do

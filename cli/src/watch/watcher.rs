@@ -465,7 +465,9 @@ impl Watcher {
     }
 
     /// (path, is_dir, mtime) for everything under `root` up to max_depth,
-    /// excluded directories pruned (.git is kept), in os.walk order.
+    /// excluded directories pruned (.git is kept), in os.walk order with each
+    /// directory's entries sorted by name, so a pass that hits
+    /// max_changes_per_pass stops at the same place on every filesystem.
     fn iter_paths(
         &mut self,
         root: &Path,
@@ -514,6 +516,8 @@ impl Watcher {
                 self.walk_error(&d, &err);
                 continue;
             }
+            dirs.sort();
+            files.sort();
             let depth = parts(&d).len().saturating_sub(root_depth);
             if depth >= self.max_depth {
                 dirs.clear();
