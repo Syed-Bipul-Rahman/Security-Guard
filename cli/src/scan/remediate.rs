@@ -301,11 +301,16 @@ pub fn strip_padded_loader(text: &str) -> LoaderFix {
         return LoaderFix::None;
     };
     let head = &text[..m.start()];
+    let tail = &text[m.start()..];
     if head.trim_start_matches('\u{feff}').trim().is_empty() {
-        return LoaderFix::Whole;
+        // a bare marker with no _0x body is not the loader: leave it to a person
+        return if tail.contains("_0x") {
+            LoaderFix::Whole
+        } else {
+            LoaderFix::Unsafe
+        };
     }
     let real = head.trim_end_matches([' ', '\t']);
-    let tail = &text[m.start()..];
     if head.len() - real.len() < LOADER_PAD
         || real.ends_with(['\n', '\r'])
         || tail.trim_end().contains('\n')
@@ -988,6 +993,7 @@ mod tests {
             format!("{real}\n{pad}{BANG}{LOADER}\n"),        // pad on its own line
             format!("{real}{pad}{BANG};var x = 1;\n"),       // no _0x loader
             format!("f({pad}{BANG}{LOADER}\n"),              // cut leaves f( open
+            format!("{BANG};module.exports = 1;\n"),         // bare marker, no loader
         ] {
             assert_eq!(strip_padded_loader(&src), LoaderFix::Unsafe, "{src}");
         }

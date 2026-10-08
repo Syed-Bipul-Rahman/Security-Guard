@@ -290,6 +290,9 @@ fn loader_wave_variants() {
         .collect();
     for want in [
         ".env env.auth.b64.2",
+        ".env env.stage2.b64",
+        "scripts/fetch-assets.js ioc.stage2.url",
+        "postcss.config.js payload.loader.0x",
         "babel.config.js payload.marker.bang.dq",
         "babel.config.js payload.loader.0x",
         "eslint.config.js payload.marker.gi",
@@ -349,7 +352,18 @@ fn loader_wave_variants() {
         .iter()
         .map(|f| f["sig_id"].as_str().unwrap())
         .collect();
-    assert_eq!(left, ["env.auth.b64.2"], "{rescan}");
+    // .env, a file that only names the URL and a novel marker value are left
+    // for a person
+    assert_eq!(
+        left,
+        [
+            "env.auth.b64.2",
+            "env.stage2.b64",
+            "payload.loader.0x",
+            "ioc.stage2.url"
+        ],
+        "{rescan}"
+    );
 
     let target = s(&repo.join("jest.config.js"));
     let out = g(&tmp, &["restore", &target]).run();
@@ -386,6 +400,7 @@ fn loader_wave_near_misses() {
         ("e.js", format!("{g_}.i=0;{obf}\n")),
         ("f.js", format!("{g_}This.version=\"10-1300\";{obf}\n")),
         ("g.js", format!("my{g_}.i=\"A9-0646-1\";\n")),
+        ("h.js", "function a0_0x12d6(){return void 0;}\n".to_string()),
         (
             ".env",
             "PORT=3000\nAUTH_API_KEY=c2VjcmV0LXRva2Vu\nCDN=https://files.catbox.moe/other.png\n"

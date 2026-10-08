@@ -86,7 +86,7 @@
       "severity": "critical",
       "category": "obfuscated-c2",
       "requires": "_0x",
-      "pattern": "\\bglobal(?:\\['!'\\]|\\[\"!\"\\]|\\.i)\\s*=\\s*['\"][^'\"\\r\\n]{1,16}['\"]\\s*;\\s*(?:(?:var|let|const)\\s+_0x[0-9a-f]{4,6}\\s*=\\s*_0x[0-9a-f]{4,6}\\s*;\\s*)?(?:\\(function\\s*\\(\\s*_0x[0-9a-f]{4,6}|function\\s+(?:a\\d{1,3}_)?_0x[0-9a-f]{4,6}\\s*\\()",
+      "pattern": "\\bglobal(?:\\['!'\\]|\\[\"!\"\\]|\\.i)\\s*=\\s*['\"][^'\"\\r\\n]{1,16}['\"]\\s*;\\s*(?:(?:var|let|const)\\s+_0x[0-9a-f]{4,6}\\s*=\\s*_0x[0-9a-f]{4,6}\\s*;\\s*)?(?:\\(function\\s*\\(\\s*_0x[0-9a-f]{4,6}|function\\s+(?:a\\d{1,3})?_0x[0-9a-f]{4,6}\\s*\\()",
       "desc": "Loader marker followed directly by a javascript-obfuscator _0x wrapper"
     }
   ],
