@@ -293,6 +293,8 @@ fn loader_wave_variants() {
         ".env env.stage2.b64",
         "scripts/fetch-assets.js ioc.stage2.url",
         "postcss.config.js payload.loader.0x",
+        "postcss.config.js payload.loader.prefixed",
+        "scripts/helper.js payload.loader.prefixed",
         "babel.config.js payload.marker.bang.dq",
         "babel.config.js payload.loader.0x",
         "eslint.config.js payload.marker.gi",
@@ -338,7 +340,7 @@ fn loader_wave_variants() {
         names("neutralized"),
         ["babel.config.js", "eslint.config.js", "jest.config.js"]
     );
-    assert_eq!(names("quarantined"), ["postinstall.js"]);
+    assert_eq!(names("quarantined"), ["helper.js", "postinstall.js"]);
     assert!(!repo.join("scripts/postinstall.js").exists());
     assert_eq!(
         text(&std::fs::read(repo.join("jest.config.js")).unwrap()),
@@ -360,6 +362,7 @@ fn loader_wave_variants() {
             "env.auth.b64.2",
             "env.stage2.b64",
             "payload.loader.0x",
+            "payload.loader.prefixed",
             "ioc.stage2.url"
         ],
         "{rescan}"
@@ -400,7 +403,6 @@ fn loader_wave_near_misses() {
         ("e.js", format!("{g_}.i=0;{obf}\n")),
         ("f.js", format!("{g_}This.version=\"10-1300\";{obf}\n")),
         ("g.js", format!("my{g_}.i=\"A9-0646-1\";\n")),
-        ("h.js", "function a0_0x12d6(){return void 0;}\n".to_string()),
         (
             ".env",
             "PORT=3000\nAUTH_API_KEY=c2VjcmV0LXRva2Vu\nCDN=https://files.catbox.moe/other.png\n"

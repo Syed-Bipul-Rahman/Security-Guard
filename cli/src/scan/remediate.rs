@@ -279,6 +279,9 @@ static LOADER_MARKER: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
+static PREFIXED_0X: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^function\s+a\d{1,3}_0x[0-9a-f]{4,6}\s*\(").unwrap());
+
 /// Whitespace the loader is pushed past, so it sits off-screen in an editor.
 const LOADER_PAD: usize = 64;
 
@@ -298,17 +301,21 @@ pub enum LoaderFix {
 /// of a real config file, and the file without it.
 pub fn strip_padded_loader(text: &str) -> LoaderFix {
     let Some(m) = LOADER_MARKER.find(text) else {
-        return LoaderFix::None;
+        // no marker, but the file opens with a prefixed obfuscator function
+        // (a0_0x12d6): no developer writes that by hand, the file is the loader
+        let start = text.trim_start_matches('\u{feff}').trim_start();
+        return if PREFIXED_0X.is_match(start) {
+            LoaderFix::Whole
+        } else {
+            LoaderFix::None
+        };
     };
     let head = &text[..m.start()];
     let tail = &text[m.start()..];
     if head.trim_start_matches('\u{feff}').trim().is_empty() {
-        // a bare marker with no _0x body is not the loader: leave it to a person
-        return if tail.contains("_0x") {
-            LoaderFix::Whole
-        } else {
-            LoaderFix::Unsafe
-        };
+        // no real file opens with the campaign marker: the whole file is
+        // the payload, _0x body or not (quarantine keeps a backup)
+        return LoaderFix::Whole;
     }
     let real = head.trim_end_matches([' ', '\t']);
     if head.len() - real.len() < LOADER_PAD
@@ -987,16 +994,23 @@ mod tests {
             strip_padded_loader(&format!("\n  {GI}{LOADER}")),
             LoaderFix::Whole
         );
+        assert_eq!(
+            strip_padded_loader(&format!("{BANG};module.exports = 1;\n")),
+            LoaderFix::Whole
+        );
         for src in [
             format!("{real} {BANG}{LOADER}\n"),              // no pad
             format!("{real}{pad}{BANG}{LOADER}\nmore();\n"), // code after it
             format!("{real}\n{pad}{BANG}{LOADER}\n"),        // pad on its own line
             format!("{real}{pad}{BANG};var x = 1;\n"),       // no _0x loader
             format!("f({pad}{BANG}{LOADER}\n"),              // cut leaves f( open
-            format!("{BANG};module.exports = 1;\n"),         // bare marker, no loader
         ] {
             assert_eq!(strip_padded_loader(&src), LoaderFix::Unsafe, "{src}");
         }
+        assert_eq!(
+            strip_padded_loader("function a0_0x12d6(){return [];}\n"),
+            LoaderFix::Whole
+        );
         for src in [
             real.to_string(),
             concat!("glo", "bal['!'] = fn;").to_string(),
