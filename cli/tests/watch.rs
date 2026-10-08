@@ -675,6 +675,10 @@ fn service_detects_and_stops(native: bool) {
         watched,
         Some(json!({"native_events": native, "poll_interval_sec": 0.5, "full_rescan_sec": 300})),
     );
+    // an install whose first-start scan already ran: the tree is primed
+    // silently and only what lands afterwards is scanned
+    // (service_scans_existing_files_on_first_start covers the first start)
+    write(&w.home.join("initial-scan.done"), "");
     let log = w.home.join("watcher.log");
     let (out, err) = (w.tmp.join("stdout"), w.tmp.join("stderr"));
     let mut svc = Service::start(&w, &out, &err);
@@ -783,4 +787,71 @@ fn service_detects_and_stops(native: bool) {
             w.index(),
         ),
     );
+}
+
+/// A machine infected before Guard was installed: the first start scans and
+/// cleans what is already in the watch roots, and later starts don't repeat it.
+#[test]
+fn service_scans_existing_files_on_first_start() {
+    let w = Watch::new(
+        watched,
+        Some(json!({"native_events": true, "poll_interval_sec": 0.5, "full_rescan_sec": 300})),
+    );
+    let log = w.home.join("watcher.log");
+    let alerts = w.home.join("alerts.jsonl");
+    let marker = w.home.join("initial-scan.done");
+    let (out, err) = (w.tmp.join("stdout"), w.tmp.join("stderr"));
+    let mut svc = Service::start(&w, &out, &err);
+    assert!(
+        wait_for(|| read(&log).contains("initial scan complete"), 300),
+        "{}",
+        read(&log)
+    );
+    svc.stop();
+    let text = read(&log);
+    assert!(!text.contains("priming baseline snapshot"), "{text}");
+    assert!(marker.exists(), "{text}");
+    let found = read(&alerts);
+    let dl = w.work.join("Downloads");
+    // the loose loader, the EICAR file (not a scan_new_files_ext type, so the
+    // antivirus engine alone) and the disguised font dropper, and the
+    // infected clone
+    for p in [
+        dl.join("invoice.js"),
+        dl.join("eicar.com"),
+        dl.join("fa-solid-400.woff2"),
+        w.work.join("Projects").join("app"),
+    ] {
+        let p = serde_json::to_string(&p.to_string_lossy()).unwrap();
+        assert!(found.contains(&p), "no alert for {p}:\n{found}\n{text}");
+    }
+    // nothing outside the watch scope: excluded and too-deep paths
+    assert!(!found.contains("node_modules"), "{found}");
+    assert!(!found.contains("deep.js"), "{found}");
+    // cleaned: the whole-file threats are gone, the clone's code was excised
+    assert!(!dl.join("eicar.com").exists(), "{text}");
+    assert!(!dl.join("fa-solid-400.woff2").exists(), "{text}");
+    let server = read(&w.work.join("Projects/app/src/server.ts"));
+    assert!(server.contains("export const app"), "{server}");
+    assert!(!server.contains(EVAL), "{server}");
+
+    // the next start doesn't scan everything again: the cleaned loose files
+    // aren't re-alerted (the repo's remaining findings, such as its workflow,
+    // are, as after any remediation, once its changed files are rescanned)
+    let n = found.len();
+    let mut svc = Service::start(&w, &out, &err);
+    assert!(
+        wait_for(
+            || read(&log).matches("native file events").count() >= 2,
+            120
+        ),
+        "{}",
+        read(&log)
+    );
+    std::thread::sleep(Duration::from_millis(2000));
+    svc.stop();
+    let text = read(&log);
+    assert_eq!(text.matches("initial scan:").count(), 1, "{text}");
+    let later = &read(&alerts)[n..];
+    assert!(!later.contains("Downloads"), "{later}\n{text}");
 }

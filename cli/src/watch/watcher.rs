@@ -8,7 +8,13 @@
 //!   new .git directory            -> repo cloned   -> full repo scan
 //!   .git/HEAD, refs, FETCH_HEAD   -> pull / fetch  -> rescan the repo
 //!   new directory                 -> rescan its repo, if any
-//!   new file outside a repo       -> single-file scan
+//!   new file outside a repo       -> single-file scan (any file type gets
+//!                                    the antivirus engine; the scan_new_files_ext
+//!                                    types also get the supply-chain checks)
+//!
+//! The first start scans everything already in the watch roots, so a machine
+//! that was infected before Guard was installed is cleaned too; the
+//! initial-scan.done marker in the guard home records that it ran.
 //!
 //! Critical findings go to alerts.jsonl and, by default, are cleaned (backed
 //! up first; `guard restore` undoes it).
@@ -182,6 +188,8 @@ enum Kind {
     GitChange,
     NewDir,
     NewFile,
+    /// a file of a type outside scan_new_files_ext: antivirus engine only
+    OtherFile,
 }
 
 struct Event {
@@ -457,7 +465,9 @@ impl Watcher {
     }
 
     /// (path, is_dir, mtime) for everything under `root` up to max_depth,
-    /// excluded directories pruned (.git is kept), in os.walk order.
+    /// excluded directories pruned (.git is kept), in os.walk order with each
+    /// directory's entries sorted by name, so a pass that hits
+    /// max_changes_per_pass stops at the same place on every filesystem.
     fn iter_paths(
         &mut self,
         root: &Path,
@@ -506,6 +516,8 @@ impl Watcher {
                 self.walk_error(&d, &err);
                 continue;
             }
+            dirs.sort();
+            files.sort();
             let depth = parts(&d).len().saturating_sub(root_depth);
             if depth >= self.max_depth {
                 dirs.clear();
@@ -581,7 +593,11 @@ impl Watcher {
                 detail: format!("new {ext} file"),
             });
         }
-        None
+        Some(Event {
+            kind: Kind::OtherFile,
+            path: path.into(),
+            detail: "new file".into(),
+        })
     }
 
     /// Nearest ancestor holding .git, never above the watch root containing
@@ -656,7 +672,9 @@ impl Watcher {
 
     fn scan_file(&mut self, path: &str) {
         let ext = pystr::suffix(path).to_lowercase();
-        let mut findings: Vec<Value> = if scanner::BINARY_EXTS.contains(&ext.as_str()) {
+        let mut findings: Vec<Value> = if !self.scan_exts.contains(&ext) {
+            vec![] // antivirus engine only (below)
+        } else if scanner::BINARY_EXTS.contains(&ext.as_str()) {
             self.scanner
                 .magic
                 .check_file(path)
@@ -702,15 +720,17 @@ impl Watcher {
 
     // ------------------------------------------------------------ loop
     /// Sorts a batch of changed paths into repo and file scans, stopping at
-    /// max_changes_per_pass so a mass change can't grow them without limit.
+    /// `cap` (max_changes_per_pass) so a mass change can't grow them without
+    /// limit.
     fn handle_changes(
         &self,
         changes: &[(String, &str)],
         work: &mut Work,
         is_dir: &HashSet<String>,
+        cap: usize,
     ) {
         for (path, _status) in changes {
-            if work.repos.len() + work.files.len() >= self.max_changes_per_pass {
+            if work.repos.len() + work.files.len() >= cap {
                 return;
             }
             let Some(ev) = self.classify(path, is_dir.contains(path)) else {
@@ -726,7 +746,14 @@ impl Watcher {
                 Kind::NewFile => {
                     if let Some(repo) = self.repo_root(path) {
                         work.add_repo(repo, "new file in repo");
-                    } else if work.files.len() < self.max_changes_per_pass {
+                    } else if work.files.len() < cap {
+                        work.files.push(path.clone());
+                    }
+                }
+                // inside a repo only the scan_new_files_ext types (and git
+                // activity) trigger a repo scan; editing other files must not
+                Kind::OtherFile => {
+                    if work.files.len() < cap && self.repo_root(path).is_none() {
                         work.files.push(path.clone());
                     }
                 }
@@ -753,7 +780,7 @@ impl Watcher {
             match self.store.upsert_batch(batch, gen) {
                 Ok(changes) => {
                     if !changes.is_empty() {
-                        self.handle_changes(&changes, work, is_dir);
+                        self.handle_changes(&changes, work, is_dir, self.max_changes_per_pass);
                     }
                     Ok(())
                 }
@@ -803,6 +830,75 @@ impl Watcher {
             return Ok(0);
         }
         Ok(self.run_scans(work))
+    }
+
+    /// The first start's pass: records every watched path like `poll_once`
+    /// and scans all of them, not only what changed, with no
+    /// max_changes_per_pass cap, so malware that was already on the machine
+    /// before Guard was installed is found. Loose files are scanned batch by
+    /// batch (memory stays bounded); each repo is scanned once, at the end.
+    pub fn initial_scan(&mut self) -> Result<usize, String> {
+        let gen = self.store.next_generation().map_err(|e| e.to_string())?;
+        let mut batch: Vec<(String, f64)> = vec![];
+        let mut is_dir: HashSet<String> = HashSet::new();
+        let mut repos = Work::default();
+        let mut handled = 0;
+        let mut err: Option<String> = None;
+        for root in self.roots.clone() {
+            self.iter_paths(&root, None, &mut |me, path, dir, mt| {
+                if err.is_some() {
+                    return;
+                }
+                if dir {
+                    is_dir.insert(path.clone());
+                }
+                batch.push((path, mt));
+                if batch.len() >= me.batch_size {
+                    match me.initial_flush(&mut batch, &mut is_dir, gen, &mut repos) {
+                        Ok(n) => handled += n,
+                        Err(e) => err = Some(e),
+                    }
+                }
+            });
+            if let Some(e) = err.take() {
+                return Err(e);
+            }
+        }
+        handled += self.initial_flush(&mut batch, &mut is_dir, gen, &mut repos)?;
+        if let Err(e) = self.store.sweep_deleted(gen) {
+            self.log(&format!("sweep error: {e}"));
+        }
+        handled += self.run_scans(repos);
+        Ok(handled)
+    }
+
+    fn initial_flush(
+        &mut self,
+        batch: &mut Vec<(String, f64)>,
+        is_dir: &mut HashSet<String>,
+        gen: i64,
+        repos: &mut Work,
+    ) -> Result<usize, String> {
+        if batch.is_empty() {
+            return Ok(0);
+        }
+        self.store
+            .upsert_batch(batch, gen)
+            .map_err(|e| e.to_string())?;
+        let all: Vec<(String, &str)> = batch.iter().map(|(p, _)| (p.clone(), "new")).collect();
+        let mut work = Work::default();
+        self.handle_changes(&all, &mut work, is_dir, usize::MAX);
+        batch.clear();
+        is_dir.clear();
+        for (repo, reason) in work.repos {
+            repos.add_repo(repo, &reason);
+        }
+        let n = self.run_scans(Work {
+            repos: vec![],
+            files: work.files,
+        });
+        self.throttle();
+        Ok(n)
     }
 
     /// Scans what a pass found, plus any debounced repo that has settled.
@@ -1064,8 +1160,27 @@ impl Watcher {
         // events start before priming, so nothing landing meanwhile is missed
         self.native = self.start_native();
         let mut last_full = 0.0;
-        // first run: record the tree silently (existing files aren't alerted)
-        if self.store.is_empty().unwrap_or(false) {
+        let marker = self.home.join("initial-scan.done");
+        // first start (also an install upgraded from a build without it):
+        // scan what is already on the machine
+        if !marker.exists() {
+            self.log("initial scan: scanning existing files in the watch roots");
+            match self.initial_scan() {
+                Ok(n) => {
+                    if let Err(e) = fs::write(&marker, format!("{}\n", crate::util::now_iso())) {
+                        self.log(&format!("could not write {}: {e}", marker.display()));
+                    }
+                    let paths = self.store.count().unwrap_or(0);
+                    self.log(&format!(
+                        "initial scan complete: {paths} paths, {n} scanned"
+                    ));
+                }
+                Err(e) => self.log(&format!("initial scan error: {e}")),
+            }
+            last_full = now();
+        } else if self.store.is_empty().unwrap_or(false) {
+            // the snapshot was reset after the initial scan already ran:
+            // record the tree silently (existing files aren't re-alerted)
             self.log(
                 "priming baseline snapshot (first run \u{2014} existing files not re-alerted)",
             );

