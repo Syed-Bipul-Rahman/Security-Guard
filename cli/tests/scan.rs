@@ -263,6 +263,160 @@ fn testdata_repos() {
     }
 }
 
+/// Issue #24: the `_0x` loader wave tags its loader with a short campaign
+/// marker and pads it off-screen on the last line of a real config. `scan`
+/// flags every variant, `clean` cuts the loader and keeps the config,
+/// quarantines everything else it flagged, and `restore` puts a config back.
+#[test]
+fn loader_wave_variants() {
+    let tmp = Tmp::new("loader");
+    let repo = tmp.join("repo");
+    copy_tree(&repo_root().join("testdata").join("loader-repo"), &repo);
+    let before = std::fs::read(repo.join("jest.config.js")).unwrap();
+    let out = g(&tmp, &["scan", &s(&repo), "--json"]).run();
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    let found: Vec<String> = parse_json(&out.stdout)["tree"]["fingerprint"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            format!(
+                "{} {}",
+                f["where"].as_str().unwrap().replace('\\', "/"),
+                f["sig_id"].as_str().unwrap()
+            )
+        })
+        .collect();
+    for want in [
+        ".env env.auth.b64.2",
+        ".env env.stage2.b64",
+        "scripts/fetch-assets.js ioc.stage2.url",
+        "postcss.config.js payload.loader.0x",
+        "postcss.config.js payload.loader.prefixed",
+        "scripts/helper.js payload.loader.prefixed",
+        "babel.config.js payload.marker.bang.dq",
+        "babel.config.js payload.loader.0x",
+        "eslint.config.js payload.marker.gi",
+        "eslint.config.js payload.loader.0x",
+        "jest.config.js payload.marker.bang.sq",
+        "jest.config.js payload.loader.0x",
+        "scripts/postinstall.js payload.loader.0x",
+    ] {
+        assert!(
+            found.iter().any(|f| f.ends_with(want)),
+            "{want} not in {found:?}"
+        );
+    }
+    let av = g(&tmp, &["av", "scan", &s(&repo)]).run();
+    assert_eq!(
+        av.stdout.matches("script.js-loader-marker").count(),
+        8,
+        "{}",
+        av.stdout
+    );
+
+    let out = g(&tmp, &["clean", &s(&repo)]).run();
+    assert_eq!(out.code, 0, "{}", out.shown_all());
+    // the log lines come first
+    let res = parse_json(&out.stdout[out.stdout.find("\n{").unwrap()..]);
+    let names = |k: &str| -> Vec<String> {
+        res[k]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                p.as_str()
+                    .unwrap()
+                    .replace('\\', "/")
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    };
+    assert_eq!(
+        names("neutralized"),
+        ["babel.config.js", "eslint.config.js", "jest.config.js"]
+    );
+    // everything it can't cut cleanly is quarantined: no manual review
+    let mut q = names("quarantined");
+    q.sort();
+    assert_eq!(
+        q,
+        [
+            ".env",
+            "fetch-assets.js",
+            "helper.js",
+            "postcss.config.js",
+            "postinstall.js"
+        ]
+    );
+    assert_eq!(names("system"), Vec::<String>::new());
+    assert!(!repo.join("scripts/postinstall.js").exists());
+    assert_eq!(
+        text(&std::fs::read(repo.join("jest.config.js")).unwrap()),
+        "/** @type {import('jest').Config} */\nmodule.exports = {\n  testEnvironment: 'node',\n  roots: ['<rootDir>/src'],\n};\n"
+    );
+    let rescan = g(&tmp, &["scan", &s(&repo), "--json"]).run();
+    let rescan = parse_json(&rescan.stdout);
+    let left: Vec<&str> = rescan["tree"]["fingerprint"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["sig_id"].as_str().unwrap())
+        .collect();
+    assert!(left.is_empty(), "{rescan}");
+
+    let target = s(&repo.join("jest.config.js"));
+    let out = g(&tmp, &["restore", &target]).run();
+    assert_eq!(out.code, 0, "{}", out.shown_all());
+    assert_eq!(std::fs::read(repo.join("jest.config.js")).unwrap(), before);
+}
+
+/// Near misses of the issue #24 markers, plain obfuscator output and padded
+/// alignment comments stay clean.
+#[test]
+fn loader_wave_near_misses() {
+    let tmp = Tmp::new("loader-clean");
+    let repo = tmp.join("repo");
+    let ids = (0..80)
+        .map(|i| format!("_0x{i:04x}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let obf = format!("(function({ids}){{return void 0;}})();function _0x1a2b(){{return [];}}");
+    let g_ = ["glo", "bal"].concat();
+    let pad = " ".repeat(300);
+    for (name, body) in [
+        ("obfuscated.js", obf.clone()),
+        (
+            "bundle.js",
+            format!("/******/ (() => {{ var __webpack_modules__ = {{}}; {obf} }})();\n"),
+        ),
+        (
+            "a.config.js",
+            format!("module.exports = {{}};{pad}// aligned comment\n"),
+        ),
+        ("b.js", format!("{g_}['!'] = fn;{obf}\n")),
+        ("c.js", format!("{g_}['!!']='9-6600';{obf}\n")),
+        ("d.js", format!("{g_}.id=\"A9-0646-1\";{obf}\n")),
+        ("e.js", format!("{g_}.i=0;{obf}\n")),
+        ("f.js", format!("{g_}This.version=\"10-1300\";{obf}\n")),
+        ("g.js", format!("my{g_}.i=\"A9-0646-1\";\n")),
+        (
+            ".env",
+            "PORT=3000\nAUTH_API_KEY=c2VjcmV0LXRva2Vu\nCDN=https://files.catbox.moe/other.png\n"
+                .to_string(),
+        ),
+    ] {
+        write(&repo.join(name), body);
+    }
+    let out = g(&tmp, &["scan", &s(&repo)]).run();
+    assert_eq!(out.code, 0, "{}", out.shown_all());
+    let av = g(&tmp, &["av", "scan", &s(&repo)]).run();
+    assert!(!av.stdout.contains("js-loader-marker"), "{}", av.stdout);
+}
+
 #[test]
 fn scan_corpus() {
     for json_flag in [false, true] {

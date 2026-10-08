@@ -223,6 +223,9 @@ fn re(src: &str) -> Regex {
 static DYNAMIC_EXEC: LazyLock<Regex> = LazyLock::new(|| re(
     r"(?-u)(?i)\beval\s*\(|\bexec\s*\(|new\s+Function\s*\(|Invoke-Expression|\bIEX\b|\bexecute\s*\("));
 static JSOBF_ID: LazyLock<Regex> = LazyLock::new(|| re(r"(?-u)\b_0x[0-9a-f]{4,6}\b"));
+// bootstrap tag the _0x loader wave sets before its obfuscated body (issue #24)
+static LOADER_MARKER: LazyLock<Regex> = LazyLock::new(|| re(
+    r#"(?-u)\bglobal(?:\['!'\]|\["!"\]|\.i)\s*=\s*['"]A?\d{1,3}(?:-[0-9*]{1,6}){0,3}['"]"#));
 static CHARCODE: LazyLock<Regex> = LazyLock::new(|| re(r"(?-u)fromCharCode\s*\(\s*(?:\d+\s*,\s*){29,}\d+"));
 static HEX_ESC: LazyLock<Regex> = LazyLock::new(|| re(r"(?-u)\\x[0-9a-fA-F]{2}"));
 static PS_ENC: LazyLock<Regex> = LazyLock::new(|| re(
@@ -260,6 +263,9 @@ pub fn script_indicators(data: &[u8]) -> Vec<Indicator> {
     }
     if JSOBF_ID.find_iter(data).count() >= 50 {
         out.push(ind("script.js-obfuscator", 35, "javascript-obfuscator style _0x identifiers"));
+        if LOADER_MARKER.is_match(data) {
+            out.push(ind("script.js-loader-marker", 40, "obfuscated loader tagged with a known campaign marker"));
+        }
     }
     if dyn_exec && CHARCODE.is_match(data) {
         out.push(ind("script.charcode-exec", 40, "builds code from character codes and executes it"));
@@ -443,11 +449,17 @@ mod tests {
         // split so this source never holds the strings the rules hunt for
         let iex = ["I", "EX"].concat();
         let amsi = ["Amsi", "ScanBuffer"].concat();
+        let bang = ["glo", "bal['!']="].concat();
+        let gi = ["glo", "bal.i="].concat();
         let cases: Vec<(String, Vec<&str>)> = vec![
             (format!("eval(atob('{blob}'))"), vec!["script.exec-encoded-blob"]),
             (format!("const img = 'data:image/png;base64,{blob}';"), vec![]),
             (x_ids(60), vec!["script.js-obfuscator"]),
             (x_ids(10), vec![]),
+            (format!("{}{}", [bang.as_str(), "'9-6600';"].concat(), x_ids(60)), vec!["script.js-obfuscator", "script.js-loader-marker"]),
+            (format!("{}{}", [gi.as_str(), "\"A10-1300\";"].concat(), x_ids(60)), vec!["script.js-obfuscator", "script.js-loader-marker"]),
+            (format!("{}{}", [bang.as_str(), "'9-6600';"].concat(), x_ids(10)), vec![]),
+            (format!("{}{}", [bang.as_str(), "fn;"].concat(), x_ids(60)), vec!["script.js-obfuscator"]),
             (format!("eval(String.fromCharCode({}))", codes(false)), vec!["script.charcode-exec"]),
             (format!("String.fromCharCode({})", codes(true)), vec![]),
             ("\\x41".repeat(400), vec!["script.hex-escaped"]),

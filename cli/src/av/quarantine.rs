@@ -107,6 +107,11 @@ impl Vault {
     pub fn quarantine(&self, path: &str, threat: &str) -> Result<Map<String, Value>, String> {
         let src = Path::new(path);
         let shown = crate::deps::py_path_str(path);
+        if util::is_system_path(&shown) {
+            return Err(format!(
+                "not quarantining {shown}: operating-system directory"
+            ));
+        }
         let data = fs::read(src)
             .map_err(|e| format!("cannot read {shown}: {}", pystr::os_error(&e, &shown)))?;
         let io = |e: std::io::Error| e.to_string();

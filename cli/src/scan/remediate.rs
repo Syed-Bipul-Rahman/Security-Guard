@@ -2,7 +2,8 @@
 //! malicious IIFEs out of real source files, quarantine whole-file droppers,
 //! drop auto-run settings and tasks from .vscode. Every change is backed up to
 //! <guard_home>/quarantine first and recorded in index.jsonl, so `guard
-//! restore` can put it back. A source file is never deleted.
+//! restore` can put it back. Anything flagged that can't be cut out cleanly is
+//! quarantined (backed up, then removed); nothing is left for manual review.
 
 use std::fs;
 use std::io::Write;
@@ -271,6 +272,74 @@ pub fn strip_malicious_iife(text: &str) -> (String, Vec<String>) {
     (BLANKS.replace_all(&out, "\n\n").into_owned(), removed)
 }
 
+/// Bootstrap marker of the `_0x` loader wave (issue #24), e.g. a
+/// `global['!']`, `global["!"]` or `global.i` assignment of a short campaign
+/// tag such as 9-6600 or A10-1300.
+static LOADER_MARKER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\bglobal(?:\['!'\]|\["!"\]|\.i)\s*=\s*['"]A?\d{1,3}(?:-[0-9*]{1,6}){0,3}['"]"#)
+        .unwrap()
+});
+
+static PREFIXED_0X: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^function\s+a\d{1,3}_0x[0-9a-f]{4,6}\s*\(").unwrap());
+
+/// Whitespace the loader is pushed past, so it sits off-screen in an editor.
+const LOADER_PAD: usize = 64;
+
+#[derive(Debug, PartialEq)]
+pub enum LoaderFix {
+    /// No loader marker.
+    None,
+    /// The marker is the first thing in the file: the whole file is the loader.
+    Whole,
+    /// The real file with the padded loader cut off its last line.
+    Cut(String),
+    /// A marker in a place this can't cut safely.
+    Unsafe,
+}
+
+/// Find the `_0x` loader appended after a long run of spaces on the last line
+/// of a real config file, and the file without it.
+pub fn strip_padded_loader(text: &str) -> LoaderFix {
+    let Some(m) = LOADER_MARKER.find(text) else {
+        // no marker, but the file opens with a prefixed obfuscator function
+        // (a0_0x12d6): no developer writes that by hand, the file is the loader
+        let start = text.trim_start_matches('\u{feff}').trim_start();
+        return if PREFIXED_0X.is_match(start) {
+            LoaderFix::Whole
+        } else {
+            LoaderFix::None
+        };
+    };
+    let head = &text[..m.start()];
+    let tail = &text[m.start()..];
+    if head.trim_start_matches('\u{feff}').trim().is_empty() {
+        // no real file opens with the campaign marker: the whole file is
+        // the payload, _0x body or not (quarantine keeps a backup)
+        return LoaderFix::Whole;
+    }
+    let real = head.trim_end_matches([' ', '\t']);
+    if head.len() - real.len() < LOADER_PAD
+        || real.ends_with(['\n', '\r'])
+        || tail.trim_end().contains('\n')
+        || !tail.contains("_0x")
+    {
+        return LoaderFix::Unsafe;
+    }
+    let nl = if text.ends_with("\r\n") {
+        "\r\n"
+    } else if text.ends_with('\n') {
+        "\n"
+    } else {
+        ""
+    };
+    let new = format!("{real}{nl}");
+    if LOADER_MARKER.is_match(&new) || !brackets_balanced(new.as_bytes()) {
+        return LoaderFix::Unsafe;
+    }
+    LoaderFix::Cut(new)
+}
+
 // ---------------------------------------------------------------------------
 // tolerant JSONC (string-aware)
 // ---------------------------------------------------------------------------
@@ -314,7 +383,7 @@ fn load_jsonc(p: &Path) -> Option<Value> {
 // the remediator
 // ---------------------------------------------------------------------------
 
-const SCRIPT_EXTS: &[&str] = &[".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"];
+pub const SCRIPT_EXTS: &[&str] = &[".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"];
 const BINARY_EXTS: &[&str] = &[
     ".woff2", ".woff", ".ttf", ".otf", ".png", ".jpg", ".jpeg", ".ico", ".gif", ".webp",
 ];
@@ -410,6 +479,13 @@ impl Remediator {
     }
 
     fn quarantine_file(&self, path: &str, reason: &str) -> Result<Value, String> {
+        if crate::util::is_system_path(path) {
+            self.log(&format!(
+                "remediate: not quarantining {path} (operating-system directory)"
+            ));
+            return Ok(json!({"action": "system", "path": path,
+                "note": "flagged inside an operating-system directory; not removed"}));
+        }
         let (backup, sha) = self.backup(path)?;
         if let Err(e) = fs::remove_file(path) {
             return Ok(
@@ -442,11 +518,9 @@ impl Remediator {
             return Ok(None);
         }
         if !brackets_balanced(new.as_bytes()) {
-            self.log(&format!(
-                "remediate: refusing to edit {path} (removal would unbalance it) — left for manual review"
-            ));
-            return Ok(Some(json!({"action": "manual", "path": path,
-                "note": "malicious block found but safe bounds unclear; manual review"})));
+            return self
+                .quarantine_file(path, "injected block with unclear bounds")
+                .map(Some);
         }
         let (backup, before) = self.backup(path)?;
         py::write_text(Path::new(path), &new).map_err(|e| pystr::os_error(&e, path))?;
@@ -466,6 +540,40 @@ impl Remediator {
         Ok(Some(
             json!({"action": "neutralize", "path": path, "blocks": n, "backup": backup.to_string_lossy()}),
         ))
+    }
+
+    fn strip_loader(&self, path: &str) -> Result<Option<Value>, String> {
+        let Ok(text) = py::read_text(Path::new(path)) else {
+            return Ok(None);
+        };
+        match strip_padded_loader(&text) {
+            LoaderFix::None => Ok(None),
+            LoaderFix::Whole => self
+                .quarantine_file(path, "whole-file _0x loader")
+                .map(Some),
+            LoaderFix::Unsafe => self
+                .quarantine_file(path, "_0x loader with unclear bounds")
+                .map(Some),
+            LoaderFix::Cut(new) => {
+                let (backup, before) = self.backup(path)?;
+                py::write_text(Path::new(path), &new).map_err(|e| pystr::os_error(&e, path))?;
+                let after = py::sha256_hex(new.as_bytes());
+                self.record(
+                    "neutralize",
+                    path,
+                    Some(&backup),
+                    json!(before),
+                    json!(after),
+                    "removed padded _0x loader",
+                );
+                self.log(&format!(
+                    "remediate: cut padded _0x loader from {path} (kept the real code)"
+                ));
+                Ok(Some(
+                    json!({"action": "neutralize", "path": path, "blocks": 1, "backup": backup.to_string_lossy()}),
+                ))
+            }
+        }
     }
 
     fn write_json(&self, path: &str, data: &Value) -> Result<String, String> {
@@ -521,7 +629,9 @@ impl Remediator {
         ]
         .iter()
         .any(|k| blob.contains(k));
-        auto && bad
+        // an auto-run task is the attack's trigger, and a dropper-like
+        // command is the payload: either one goes
+        auto || bad
     }
 
     fn clean_vscode_tasks(&self, path: &str) -> Result<Option<Value>, String> {
@@ -586,10 +696,47 @@ impl Remediator {
             if let Some(r) = self.neutralize_js(&path)? {
                 return Ok(r);
             }
+            if let Some(r) = self.strip_loader(&path)? {
+                return Ok(r);
+            }
         }
-        // a real source file we couldn't surgically clean: NEVER delete it
-        Ok(json!({"action": "manual", "path": path,
-            "note": "malicious markers present but no safe automatic fix; manual review"}))
+        // flagged and not cleanly cut out: quarantine it (backed up first)
+        self.quarantine_file(&path, "flagged file with no safe in-place fix")
+    }
+
+    /// `guard clean <file>`: VS Code files go to their config cleaners; any
+    /// other file is scanned first and quarantined or cut only when flagged.
+    pub fn clean_file(&self, path_arg: &str) -> Result<Value, String> {
+        let path = py_path_str(path_arg);
+        let parent = pystr::name(&path[..path.len() - pystr::name(&path).len()]).to_lowercase();
+        if parent == ".vscode" {
+            return self.remediate_file(&path, false);
+        }
+        let sig = super::sigs::load(None)?;
+        let mut sc = Scanner::new(&sig, true)?;
+        let ext = pystr::suffix(&path).to_lowercase();
+        let mut flagged = BINARY_EXTS.contains(&ext.as_str())
+            && sc
+                .magic
+                .check_file(&path)
+                .iter()
+                .any(|f| matches!(f.severity, "critical" | "high"));
+        if !flagged {
+            if let Some(text) = super::scanner::read_text_capped(Path::new(&path)) {
+                flagged = sc
+                    .matcher
+                    .scan_content(&path, &text)
+                    .iter()
+                    .any(|f| crit(&json!({"severity": f.severity, "sig_id": f.sig_id})));
+            }
+        }
+        let av = sc.av_scan_file(&path, &path);
+        if !flagged && av.is_none() {
+            return Ok(json!({"action": "noop", "path": path}));
+        }
+        let whole = BINARY_EXTS.contains(&ext.as_str())
+            || (av.is_some() && !SCRIPT_EXTS.contains(&ext.as_str()));
+        self.remediate_file(&path, whole)
     }
 
     /// Detect with the scanner, then remediate every flagged file.
@@ -597,7 +744,7 @@ impl Remediator {
         let sig = super::sigs::load(None)?;
         let mut sc = Scanner::new(&sig, true)?;
         let mut summary = obj(json!({"repo": repo, "neutralized": [], "quarantined": [],
-            "config_cleaned": [], "manual": [], "noop": []}));
+            "config_cleaned": [], "system": [], "noop": []}));
         let mut seen: Vec<String> = vec![];
         let route = |summary: &mut Map<String, Value>, res: Value| {
             let act = res.get("action").and_then(Value::as_str).unwrap_or("");
@@ -605,7 +752,7 @@ impl Remediator {
                 "neutralize" => "neutralized",
                 "quarantine" => "quarantined",
                 "clean-settings" | "clean-tasks" => "config_cleaned",
-                "manual" => "manual",
+                "system" => "system",
                 _ => "noop",
             };
             let path = res.get("path").cloned().unwrap_or(json!(""));
@@ -624,7 +771,10 @@ impl Remediator {
 
         // 1. .vscode auto-run
         let (_, vf) = sc.vscode.is_safe_to_open(repo);
-        for f in vf.iter().filter(|f| f.severity == "critical") {
+        for f in vf
+            .iter()
+            .filter(|f| matches!(f.severity, "critical" | "high"))
+        {
             if let Some(fp) = abs(Some(&json!(f.path))) {
                 if !seen.contains(&fp) {
                     seen.push(fp.clone());
@@ -670,7 +820,8 @@ impl Remediator {
                 continue;
             }
             seen.push(fp.clone());
-            let whole = x.get("action").and_then(Value::as_str) == Some("quarantine");
+            // a script gets the excise attempt first; anything else goes whole
+            let whole = !SCRIPT_EXTS.contains(&pystr::suffix(&fp).to_lowercase().as_str());
             route(&mut summary, self.remediate_file(&fp, whole)?);
         }
         Ok(Value::Object(summary))
@@ -734,8 +885,13 @@ impl Remediator {
     }
 }
 
-fn crit(v: &Value) -> bool {
-    v.get("severity").and_then(Value::as_str) == Some("critical")
+/// Anything that looks like malware: every finding but a bad font header
+/// ("low") and a workflow that is flagged only for its common file name.
+pub fn crit(v: &Value) -> bool {
+    matches!(
+        v.get("severity").and_then(Value::as_str),
+        Some("critical" | "high" | "medium")
+    ) && v.get("sig_id").and_then(Value::as_str) != Some("wf.name")
 }
 
 /// remediator.main: `guard clean [<path>]`, `guard restore <path|backup>`.
@@ -756,7 +912,7 @@ pub fn main(argv: &[String]) -> Result<u8, String> {
         rest.first().map_or(".", String::as_str)
     };
     let out = if Path::new(target).is_file() {
-        rem.remediate_file(target, false)?
+        rem.clean_file(target)?
     } else {
         rem.clean_repo(target)?
     };
@@ -859,6 +1015,60 @@ mod tests {
         assert_eq!(strip_malicious_iife(&src2).0, "z; ;tail");
     }
 
+    // split so this source never holds the markers the signatures hunt for
+    const BANG: &str = concat!("glo", "bal['!']='9-6600'");
+    const GI: &str = concat!("glo", "bal.i=\"A10-1300\"");
+    const LOADER: &str = ";(function(_0x1a2b3c,_0x4d5e6f){return void 0;}(_0x7a8b9c,0x1));function _0x7a8b9c(){return [];}";
+
+    #[test]
+    fn padded_loader_cases() {
+        let pad = " ".repeat(200);
+        let real = "module.exports = { testEnvironment: 'node' };";
+        for (marker, nl) in [(BANG, "\n"), (GI, "\r\n"), (BANG, "")] {
+            let src = format!("// jest\n{real}{pad}{marker}{LOADER}{nl}");
+            assert_eq!(
+                strip_padded_loader(&src),
+                LoaderFix::Cut(format!("// jest\n{real}{nl}")),
+                "{marker:?} {nl:?}"
+            );
+        }
+        // the marker opens the file: the whole file is the loader
+        assert_eq!(
+            strip_padded_loader(&format!("{BANG}{LOADER}\n")),
+            LoaderFix::Whole
+        );
+        assert_eq!(
+            strip_padded_loader(&format!("\n  {GI}{LOADER}")),
+            LoaderFix::Whole
+        );
+        assert_eq!(
+            strip_padded_loader(&format!("{BANG};module.exports = 1;\n")),
+            LoaderFix::Whole
+        );
+        for src in [
+            format!("{real} {BANG}{LOADER}\n"),              // no pad
+            format!("{real}{pad}{BANG}{LOADER}\nmore();\n"), // code after it
+            format!("{real}\n{pad}{BANG}{LOADER}\n"),        // pad on its own line
+            format!("{real}{pad}{BANG};var x = 1;\n"),       // no _0x loader
+            format!("f({pad}{BANG}{LOADER}\n"),              // cut leaves f( open
+        ] {
+            assert_eq!(strip_padded_loader(&src), LoaderFix::Unsafe, "{src}");
+        }
+        assert_eq!(
+            strip_padded_loader("function a0_0x12d6(){return [];}\n"),
+            LoaderFix::Whole
+        );
+        for src in [
+            real.to_string(),
+            concat!("glo", "bal['!'] = fn;").to_string(),
+            concat!("glo", "bal['!!']='9-6600';").to_string(),
+            concat!("glo", "bal.id=\"A9-0646-1\";").to_string(),
+            concat!("glo", "balThis.version=\"10-1300\";").to_string(),
+        ] {
+            assert_eq!(strip_padded_loader(&src), LoaderFix::None, "{src}");
+        }
+    }
+
     #[test]
     fn jsonc_and_task_rules() {
         let txt = "{\"url\": \"http://x//y\", /* c */ \"a\": [1,], // t\n \"b\": '/*k*/',}";
@@ -870,6 +1080,10 @@ mod tests {
         assert!(task(
             json!({"runOn": "folderOpen", "command": "powershell -e AAA"})
         ));
-        assert!(!task(json!({"runOptions": "x", "command": "iex "})));
+        assert!(task(json!({"runOptions": "x", "command": "iex "})));
+        assert!(task(
+            json!({"runOptions": {"runOn": "folderOpen"}, "command": "npm run dev"})
+        ));
+        assert!(!task(json!({"label": "build", "command": "npm run build"})));
     }
 }

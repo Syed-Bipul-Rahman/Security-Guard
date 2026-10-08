@@ -1,0 +1,1 @@
+function a0_0x4f2c(){return [];}(function(_0x1b2c3d,_0x2c3d4e){return void 0;}(a0_0x4f2c,0x1));
