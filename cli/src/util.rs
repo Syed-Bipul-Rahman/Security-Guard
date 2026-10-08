@@ -215,3 +215,59 @@ mod tests {
         assert_eq!(iso_utc(951_782_400, 0), "2000-02-29T00:00:00+00:00");
     }
 }
+
+/// Operating-system directories Guard never quarantines from: a false alarm
+/// there (say, on a core Windows DLL) would break the machine. Hits there are
+/// still reported.
+pub fn is_system_path(path: &str) -> bool {
+    let p = path.replace('\\', "/").to_lowercase();
+    let p = p.strip_prefix("//?/").unwrap_or(&p);
+    if cfg!(windows) || p.as_bytes().get(1) == Some(&b':') {
+        let rest = p.get(2..).unwrap_or("");
+        return rest == "/windows" || rest.starts_with("/windows/");
+    }
+    [
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/usr",
+        "/etc",
+        "/boot",
+        "/system",
+        "/library",
+        "/private/etc",
+        "/proc",
+        "/sys",
+        "/dev",
+    ]
+    .iter()
+    .any(|d| p == *d || p.starts_with(&format!("{d}/")))
+}
+
+#[cfg(test)]
+mod system_path_tests {
+    use super::is_system_path;
+
+    #[test]
+    fn system_directories() {
+        for p in [
+            r"C:\Windows\System32\kernel32.dll",
+            r"\\?\C:\WINDOWS\SysWOW64\x.dll",
+        ] {
+            assert!(is_system_path(p), "{p}");
+        }
+        for p in [r"C:\Users\me\Downloads\x.exe", r"C:\Windowsx\a"] {
+            assert!(!is_system_path(p), "{p}");
+        }
+        if !cfg!(windows) {
+            for p in ["/usr/bin/ls", "/System/Library/x", "/etc/passwd"] {
+                assert!(is_system_path(p), "{p}");
+            }
+            for p in ["/home/me/Downloads/x", "/Users/me/usr/x", "/tmp/a", "/usrx"] {
+                assert!(!is_system_path(p), "{p}");
+            }
+        }
+    }
+}

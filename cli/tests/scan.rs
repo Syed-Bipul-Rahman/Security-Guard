@@ -266,8 +266,7 @@ fn testdata_repos() {
 /// Issue #24: the `_0x` loader wave tags its loader with a short campaign
 /// marker and pads it off-screen on the last line of a real config. `scan`
 /// flags every variant, `clean` cuts the loader and keeps the config,
-/// quarantines a file that is nothing but the loader, and `restore` puts a
-/// config back.
+/// quarantines everything else it flagged, and `restore` puts a config back.
 #[test]
 fn loader_wave_variants() {
     let tmp = Tmp::new("loader");
@@ -340,7 +339,20 @@ fn loader_wave_variants() {
         names("neutralized"),
         ["babel.config.js", "eslint.config.js", "jest.config.js"]
     );
-    assert_eq!(names("quarantined"), ["helper.js", "postinstall.js"]);
+    // everything it can't cut cleanly is quarantined: no manual review
+    let mut q = names("quarantined");
+    q.sort();
+    assert_eq!(
+        q,
+        [
+            ".env",
+            "fetch-assets.js",
+            "helper.js",
+            "postcss.config.js",
+            "postinstall.js"
+        ]
+    );
+    assert_eq!(names("system"), Vec::<String>::new());
     assert!(!repo.join("scripts/postinstall.js").exists());
     assert_eq!(
         text(&std::fs::read(repo.join("jest.config.js")).unwrap()),
@@ -354,19 +366,7 @@ fn loader_wave_variants() {
         .iter()
         .map(|f| f["sig_id"].as_str().unwrap())
         .collect();
-    // .env, a file that only names the URL and a novel marker value are left
-    // for a person
-    assert_eq!(
-        left,
-        [
-            "env.auth.b64.2",
-            "env.stage2.b64",
-            "payload.loader.0x",
-            "payload.loader.prefixed",
-            "ioc.stage2.url"
-        ],
-        "{rescan}"
-    );
+    assert!(left.is_empty(), "{rescan}");
 
     let target = s(&repo.join("jest.config.js"));
     let out = g(&tmp, &["restore", &target]).run();

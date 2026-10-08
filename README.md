@@ -171,8 +171,11 @@ looks clean. So Guard fixes the **working tree by content**, never git history:
 
 - It locates the injected block with a string/comment/template-aware **bracket
   matcher** and removes exactly that span — imports and `export default
-  defineConfig(...)` are untouched. A source file is **never deleted**; if the
-  bounds are ambiguous it refuses and flags for manual review (fail-safe).
+  defineConfig(...)` are untouched. If the bounds are ambiguous, the
+  whole file is quarantined instead (backed up first; `guard restore` puts it back).
+  There is no manual-review state: anything that looks like malware, malicious or
+  suspicious, is cut out or quarantined. Files inside operating-system directories
+  (`C:\Windows`, `/usr`, `/System`, ...) are reported but never removed.
 - After cleaning, commit the fix forward: `git add -A && git commit -m "remove injected payload"`.
   (Don't reset/cherry-pick — the forged history can't be trusted.)
 
@@ -208,11 +211,11 @@ standard library, system binaries and this repository.
 **Custom signatures.** Drop `rules*.json`, `hashes*.json` / `hashes*.txt` and
 `allowlist*.json` into `~/.guard/av/` (or pass `--signatures DIR`).
 
-**Quarantine.** `guard av scan --quarantine` moves *whole-file* threats (malware
-binaries, hash hits, archives) into a vault where they are XOR-encrypted with a
+**Quarantine.** `guard av scan --quarantine` moves every flagged file, malicious
+or suspicious, into a vault where they are XOR-encrypted with a
 per-item key — never runnable, never re-detected by other AV — and restorable with
-SHA-256 verification. Malicious code found inside a legitimate source file is
-reported for review (or excised by `guard clean`), never deleted.
+SHA-256 verification. `guard clean` and the watcher cut injected code out of a
+source file when they can and quarantine the file when they can't.
 
 The watcher, `guard scan` and `guard clean` all use this engine automatically.
 

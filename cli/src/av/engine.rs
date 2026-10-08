@@ -75,20 +75,13 @@ pub struct Summary {
     pub results: Vec<ScanResult>,
 }
 
-/// "quarantine" when the whole file is the threat, "review" when malicious
-/// code may sit inside a legitimate file, "" when there is nothing to do.
+/// "quarantine" for anything malicious or suspicious (no manual review),
+/// "" when there is nothing to do.
 pub fn action_hint(r: &ScanResult) -> &'static str {
-    if r.verdict != Verdict::Malicious {
-        return "";
-    }
-    let whole = r
-        .detections
-        .iter()
-        .any(|d| d.whole_file && d.verdict == Verdict::Malicious);
-    if whole || ft::is_executable(&r.filetype) || ft::is_archive(&r.filetype) {
-        "quarantine"
+    if r.verdict == Verdict::Clean {
+        ""
     } else {
-        "review"
+        "quarantine"
     }
 }
 
