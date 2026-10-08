@@ -3,8 +3,8 @@
 //! Linux: a systemd unit running `guard watch` as root out of /var/lib/guard.
 //! macOS: a per-user LaunchAgent in the GUI session (so TCC can show its Allow
 //! prompts); it seeds ~/.guard itself on first run. Windows: guard.ps1 registers
-//! the scheduled task. The unit and plist text match what guard.py wrote, so an
-//! install from either build looks the same to the OS.
+//! the scheduled task and uninstall deletes it. The unit and plist text match
+//! what guard.py wrote, so an install from either build looks the same to the OS.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -168,8 +168,17 @@ fn install_macos(uninstall: bool) -> Result<u8, String> {
     if daemon.exists() {
         let _ = fs::remove_file(&daemon);
     }
-    call(&["launchctl", "bootout", &gui, &agent_s])?; // if reloading
-    let rc = call(&["launchctl", "bootstrap", &gui, &agent_s])?;
+    // If reloading: bootout returns before a running agent has stopped, and
+    // bootstrapping it again meanwhile fails ("5: Input/output error"), so retry.
+    call(&["launchctl", "bootout", &gui, &agent_s])?;
+    let mut rc = call(&["launchctl", "bootstrap", &gui, &agent_s])?;
+    for _ in 0..10 {
+        if rc == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        rc = call(&["launchctl", "bootstrap", &gui, &agent_s])?;
+    }
     println!("guard: launch agent installed ({agent_s}); runs '{exe} watch' as {user} at login.");
     println!("guard: on first run an 'Allow' prompt appears for Desktop/Documents/Downloads and removable disks — click Allow.");
     println!("guard: for full internal+removable coverage in one grant, enable Full Disk Access for 'guard' (guard permissions open-settings).");
@@ -235,6 +244,17 @@ pub fn run(uninstall: bool) -> Result<u8, String> {
         return install_linux(uninstall);
     }
     if cfg!(windows) {
+        if uninstall {
+            // guard.ps1 registered it; the binary stays, as on Linux and macOS
+            call(&["schtasks", "/End", "/TN", "GuardWatcher"])?;
+            let rc = call(&["schtasks", "/Delete", "/TN", "GuardWatcher", "/F"])?;
+            if rc != 0 {
+                eprintln!("guard: could not remove the GuardWatcher task (not installed, or not an elevated prompt)");
+                return Ok(1);
+            }
+            println!("guard: GuardWatcher scheduled task removed");
+            return Ok(0);
+        }
         println!("Windows: install via guard.ps1 (it registers the GuardWatcher scheduled task).");
         return Ok(0);
     }

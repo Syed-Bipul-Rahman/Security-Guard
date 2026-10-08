@@ -93,7 +93,13 @@ case "$OS" in
             -e "s|__GUARD_HOME__|$GUARD_HOME|g" \
             "$SRC_DIR/service/macos/me.syedbipul.guard.plist" > "$plist"
         launchctl bootout "gui/$(id -u)/me.syedbipul.guard" 2>/dev/null || true
-        launchctl bootstrap "gui/$(id -u)" "$plist"
+        # bootout returns before a running agent has stopped, and bootstrapping
+        # it again meanwhile fails ("5: Input/output error"): retry briefly
+        for try in 1 2 3 4 5 6 7 8 9 10; do
+            launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null && break
+            [ "$try" = 10 ] && launchctl bootstrap "gui/$(id -u)" "$plist"
+            sleep 1
+        done
         launchctl enable "gui/$(id -u)/me.syedbipul.guard" 2>/dev/null || true
         echo "    launchd agent installed + started (RunAtLoad, KeepAlive)"
         ;;
