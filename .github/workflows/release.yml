@@ -142,7 +142,12 @@ jobs:
             "https://github.com/${{ github.repository }}/releases/latest/download/$a"
           chmod +x "$prev"
           export GUARD_PREVIOUS_RELEASE="$prev"
+          # TEMP: record the Windows watch goldens
+          if [ "${{ matrix.plat }}" = windows-x64 ]; then export GUARD_GOLDEN=record-os; fi
           cargo test --locked --manifest-path cli/Cargo.toml --tests
+          if [ "${{ matrix.plat }}" = windows-x64 ]; then
+            for f in cli/tests/golden/watch/*.windows.b64; do echo "=== $f"; cat "$f"; done
+          fi
 
       - name: Name artifact
         id: name
