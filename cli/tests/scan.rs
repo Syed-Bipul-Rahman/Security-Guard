@@ -1142,9 +1142,12 @@ fn env_loader_any_name() {
     let out = g(&tmp, &["clean", &s(&server)]).run();
     assert_eq!(out.code, 0, "{}", out.shown_all());
     let text = std::fs::read_to_string(&server).unwrap();
+    // `clean` rewrites in text mode, so newlines are "\r\n" on Windows
+    let nl = if cfg!(windows) { "\r\n" } else { "\n" };
     assert_eq!(
         text,
         "import express from 'express';\nexport const app = express();\napp.listen(3000);\n"
+            .replace('\n', nl)
     );
 }
 
