@@ -33,6 +33,11 @@ sha2 = "0.11.0"
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 
+# Optimized dependencies in test builds: a debug yara-x takes ~30 s to
+# compile the bundled community rules, an optimized one ~3 s.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 lto = true
 codegen-units = 1

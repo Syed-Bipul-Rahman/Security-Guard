@@ -172,6 +172,9 @@ impl Guard {
                 cmd.env_remove(&k);
             }
         }
+        // The goldens predate the bundled community YARA rules, and compiling
+        // them costs seconds per run; tests that want them set this to "1".
+        cmd.env("GUARD_COMMUNITY_RULES", "0");
         for k in &self.remove {
             cmd.env_remove(k);
         }

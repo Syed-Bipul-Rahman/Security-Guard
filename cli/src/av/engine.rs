@@ -24,8 +24,23 @@ use super::yara::{self, YaraRuleSet};
 // gzipped by build.rs: plain signature text in the binary would match the rules
 static BUNDLED_RULES_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/av-rules.json.gz"));
 static BUNDLED_HASHES_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/av-hashes.json.gz"));
+// BUNDLED_YARA: the community YARA rule sets in data/yara, one namespace each
+include!(concat!(env!("OUT_DIR"), "/bundled_yara.rs"));
+pub static YARA_LICENSES_GZ: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/yara-licenses.txt.gz"));
 
-fn gunzip(gz: &[u8]) -> Vec<u8> {
+/// GUARD_COMMUNITY_RULES=0 leaves the bundled community YARA rules out (they
+/// add a few seconds of rule compilation to every engine start).
+pub fn community_rules_enabled() -> bool {
+    !matches!(
+        std::env::var("GUARD_COMMUNITY_RULES")
+            .as_deref()
+            .map(str::trim),
+        Ok("0" | "off" | "false" | "no")
+    )
+}
+
+pub fn gunzip(gz: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     flate2::read::GzDecoder::new(gz)
         .read_to_end(&mut out)
@@ -46,6 +61,8 @@ pub struct Config {
     pub scan_archives: bool,
     pub heuristics: bool,
     pub max_scan_bytes: u64,
+    /// load the bundled community YARA rules (see community_rules_enabled)
+    pub community_rules: bool,
 }
 
 #[derive(Default)]
@@ -171,10 +188,18 @@ impl Engine {
         e.allowlist.add_hash(&hashing::hash_bytes(&rules).sha256);
         e.hashdb.load(Path::new("hashes.json"), &hashes)?;
         e.allowlist.add_hash(&hashing::hash_bytes(&hashes).sha256);
+        if e.config.community_rules {
+            for (namespace, gz) in BUNDLED_YARA {
+                let src = gunzip(gz);
+                e.yara.load(&format!("<bundled>/{namespace}.yar"), &src);
+                e.allowlist.add_hash(&hashing::hash_bytes(&src).sha256);
+            }
+        }
         for d in extra_dirs {
             e.load_dir(d)?;
         }
         e.rules.compile()?;
+        e.yara.compile()?; // once, after every file: fail here, naming the file, not mid-scan
         Ok(e)
     }
 
@@ -210,9 +235,6 @@ impl Engine {
             self.yara
                 .load(&crate::deps::py_path_str(&f.to_string_lossy()), &b);
             self.allowlist.add_hash(&hashing::hash_bytes(&b).sha256);
-        }
-        if !yara_files.is_empty() {
-            self.yara.compile()?; // fail here, naming the file, not mid-scan
         }
         let mut hash_files = glob(d, "hashes", ".json");
         hash_files.extend(glob(d, "hashes", ".txt"));
@@ -486,6 +508,7 @@ mod tests {
             scan_archives: true,
             heuristics: true,
             max_scan_bytes,
+            community_rules: false, // these tests are about the engine, not the rules
         };
         Engine::new(cfg, &[]).unwrap()
     }
