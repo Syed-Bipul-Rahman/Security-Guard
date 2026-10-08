@@ -141,7 +141,7 @@ jobs:
             case "$f" in *.windows.b64) ;; *) continue ;; esac
             sh="${f%.windows.b64}.b64"
             echo "@@@GOLDEN $st $f"
-            if [ -f "$f" ]; then diff <(dec "$sh") <(dec "$f") | sed 's/^/@| /'; fi
+            if [ -f "$f" ]; then { diff <(dec "$sh") <(dec "$f") || true; } | sed 's/^/@| /'; fi
             echo "@@@END"
           done
           exit 1
