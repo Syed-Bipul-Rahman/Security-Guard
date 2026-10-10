@@ -1203,3 +1203,155 @@ fn unreadable_files() {
     lock(&d.join("locked"), 0o755);
     golden(SUITE, "unreadable_files", &all);
 }
+
+// The env-decode -> fetch -> eval loader under names the literal signatures
+// don't know. Bodies are inert text (env names nobody sets, no hosts); the
+// sink is spliced in so no source line here carries a whole loader.
+const EV: &str = concat!("ev", "al");
+const NEWFN: &str = concat!("new Fun", "ction");
+const FN: &str = concat!("Fun", "ction");
+
+fn env_loader_files(repo: &Path, files: &[(&str, &str)]) {
+    for (name, body) in files {
+        let body = body
+            .replace("@EV", EV)
+            .replace("@NEWFN", NEWFN)
+            .replace("@FN", FN);
+        write(&repo.join(name), body);
+    }
+}
+
+fn fingerprint_ids(out: &Out) -> Vec<String> {
+    parse_json(&out.stdout)["tree"]["fingerprint"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            format!(
+                "{} {}",
+                f["where"].as_str().unwrap().replace('\\', "/"),
+                f["sig_id"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+/// `iife.env.fetch.eval` flags the loader whatever its env var, variable,
+/// HTTP client or eval sink is called; it stays out of the way when the
+/// literal signatures already caught the original; `clean` excises a renamed
+/// IIFE and keeps the real code around it.
+#[test]
+fn env_loader_any_name() {
+    let tmp = Tmp::new("env-loader");
+    let repo = tmp.join("repo");
+    env_loader_files(
+        &repo,
+        &[
+            (
+                "src/server.ts",
+                "import express from 'express';\nexport const app = express();\n(async () => {\n  const src = atob(process.env.SESSION_KEY);\n  const res = await fetch(src);\n  const body = await res.text();\n  @EV(body);\n})();\napp.listen(3000);\n",
+            ),
+            (
+                "config/loader.js",
+                "const axios = require('axios');\nconst u = Buffer.from(process.env.CDN_TOKEN, 'base64').toString();\naxios.get(u).then((r) => { @NEWFN('require', r.data)(require); });\n",
+            ),
+            (
+                "lib/boot.cjs",
+                "const https = require('https');\nconst t = atob(process.env['APP_CFG']);\nhttps.get(t, (res) => { let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => @EV(d)); });\n",
+            ),
+            (
+                "vite.config.mjs",
+                "export default {};\nfetch(atob(process.env.X_KEY)).then((r) => r.text()).then(@EV);\n",
+            ),
+            (
+                "jest.config.js",
+                "module.exports = {};!async function(){var e=atob(process.env.API_SEED),t=await fetch(e,{method:'GET'});@EV(await t.text())}();\n",
+            ),
+            (
+                "scripts/setup.js",
+                "(async()=>{const k=atob(process.env.K1);const r=await fetch(k);const s=await r.text();@FN(s)();})();\n",
+            ),
+            ("src/original.js", PAYLOAD),
+        ],
+    );
+    let out = g(&tmp, &["scan", &s(&repo), "--json"]).run();
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    let found = fingerprint_ids(&out);
+    for f in [
+        "src/server.ts",
+        "config/loader.js",
+        "lib/boot.cjs",
+        "vite.config.mjs",
+        "jest.config.js",
+        "scripts/setup.js",
+    ] {
+        let want = format!("{f} iife.env.fetch.eval");
+        assert!(found.contains(&want), "{want} not in {found:#?}");
+    }
+    // the original is reported by the literal rules only, as before
+    assert!(found.contains(&"src/original.js iife.combo".to_string()));
+    assert!(!found.contains(&"src/original.js iife.env.fetch.eval".to_string()));
+
+    let server = repo.join("src/server.ts");
+    let out = g(&tmp, &["clean", &s(&server)]).run();
+    assert_eq!(out.code, 0, "{}", out.shown_all());
+    let text = std::fs::read_to_string(&server).unwrap();
+    // `clean` rewrites in text mode, so newlines are "\r\n" on Windows
+    let nl = if cfg!(windows) { "\r\n" } else { "\n" };
+    assert_eq!(
+        text,
+        "import express from 'express';\nexport const app = express();\napp.listen(3000);\n"
+            .replace('\n', nl)
+    );
+}
+
+/// Code that decodes env values, fetches, or evaluates, but not all three in
+/// that order, stays clean: credentials, basic auth, local strings, webpack's
+/// eval-source-map dev bundles and the `Function('return this')` polyfill.
+#[test]
+fn env_loader_near_misses() {
+    let tmp = Tmp::new("env-loader-clean");
+    let repo = tmp.join("repo");
+    let far = format!(
+        "const t = atob(process.env.T);\n{}fetch(t);\n{}@EV(z);\n",
+        "x();\n".repeat(100),
+        "y();\n".repeat(100)
+    );
+    env_loader_files(
+        &repo,
+        &[
+            (
+                "src/creds.ts",
+                "const creds = JSON.parse(Buffer.from(process.env.GCP_SA_KEY, 'base64').toString());\nexport async function token() {\n  const r = await fetch('https://example.invalid/token', { headers: { a: creds.id } });\n  return r.json();\n}\n",
+            ),
+            (
+                "src/auth.js",
+                "const auth = atob(process.env.BASIC_AUTH);\nmodule.exports = (url) => fetch(url, { headers: { Authorization: 'Basic ' + auth } });\n",
+            ),
+            (
+                "src/local.js",
+                "async function f() { const res = await fetch('/api/health'); return res.text(); }\nmodule.exports = { f, two: @EV('2 + 2') };\n",
+            ),
+            (
+                "src/plain-env.js",
+                "const u = process.env.API_URL;\nmodule.exports = () => fetch(u).then((r) => r.json());\n",
+            ),
+            (
+                "public/app.js",
+                "/***/ \"./src/a.js\":\n/***/ ((module) => {\n@EV(\"const k = Buffer.from(process.env.KEY, 'base64');\\nfetch(k);\\n//# sourceURL=webpack:///./src/a.js?\");\n/***/ }),\n/***/ \"./src/b.js\":\n/***/ ((module) => {\n@EV(\"module.exports = 1;\\n//# sourceURL=webpack:///./src/b.js?\");\n/***/ })\n",
+            ),
+            (
+                "src/polyfill.js",
+                "const t = atob(process.env.T);\nfetch(t);\nvar g = @FN('return this')();\n",
+            ),
+            ("src/far.js", far.as_str()),
+            (
+                "src/order.js",
+                "@EV(code);\nconst t = atob(process.env.T);\nfetch(t);\n",
+            ),
+        ],
+    );
+    let out = g(&tmp, &["scan", &s(&repo), "--json"]).run();
+    assert_eq!(out.code, 0, "{}", out.stdout);
+    assert!(fingerprint_ids(&out).is_empty(), "{}", out.stdout);
+}

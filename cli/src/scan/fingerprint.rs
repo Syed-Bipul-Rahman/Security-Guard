@@ -86,6 +86,9 @@ struct Rx {
     category: String,
     desc: String,
     requires: Option<String>,
+    /// a generic rule: it reports only when no other rule of its category
+    /// already fired on the same content
+    fallback: bool,
     re: Regex,
 }
 
@@ -151,6 +154,7 @@ impl Matcher {
                 category: category(r),
                 desc: req_str(r, "desc")?,
                 requires: opt_str(r, "requires").filter(|s| !s.is_empty()),
+                fallback: r.get("fallback").and_then(Value::as_bool).unwrap_or(false),
                 re: py::compile(&req_str(r, "pattern")?, &flags)?,
             });
         }
@@ -247,6 +251,9 @@ impl Matcher {
                     continue;
                 }
             }
+            if r.fallback && out.iter().any(|f| f.category == r.category) {
+                continue;
+            }
             if let Some(m) = r.re.find(content) {
                 let ev = py::head(m.as_str(), 80).replace('\n', "\\n");
                 out.push(Finding::new(
@@ -341,6 +348,24 @@ mod tests {
         let mut v: Vec<&str> = f.iter().map(|x| x.sig_id.as_str()).collect();
         v.sort_unstable();
         v
+    }
+
+    /// A `fallback` regex reports only when no rule of its category fired.
+    #[test]
+    fn fallback_regex() {
+        let m = Matcher::new(&json!({
+            "literals": [{"id": "lit", "severity": "critical", "category": "c",
+                          "value": "known", "desc": "d"}],
+            "regexes": [
+                {"id": "gen", "severity": "critical", "category": "c",
+                 "fallback": true, "pattern": "k\\w+", "desc": "d"},
+                {"id": "other", "severity": "high", "category": "x",
+                 "fallback": true, "pattern": "k\\w+", "desc": "d"}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(ids(&m.scan_content("a.js", "kn0wn")), ["gen", "other"]);
+        assert_eq!(ids(&m.scan_content("a.js", "known")), ["lit", "other"]);
     }
 
     /// test_legacy_engines.py TestFingerprintMatcher: names alone, pruned
