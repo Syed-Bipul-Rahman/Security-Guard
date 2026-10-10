@@ -104,6 +104,15 @@ service_running() {   # <user|system>
         Darwin:*)      launchctl print "gui/$(id -u)/$LABEL" | grep -q "state = running" ;;
     esac
 }
+# launchd and systemd report a just-started service as still spawning for a
+# moment, so give it time before calling it down
+service_up() {        # <user|system>
+    for _ in $(seq 30); do
+        service_running "$1" && return 0
+        sleep 1
+    done
+    return 1
+}
 service_gone() {      # <user|system>
     case "$OS:$1" in
         Linux:user)    ! systemctl --user is-active --quiet guard.service \
@@ -139,7 +148,7 @@ step "install.sh: check the install"
 [ -s "$HOME/.guard/watcher.config.json" ] || fail "install.sh wrote no watcher.config.json"
 [ "$(git config --global --get core.hooksPath)" = "$HOME/.guard/githooks" ] \
     || fail "install.sh did not set the global git hooks"
-service_running user || { show_service user; fail "the watcher service is not running"; }
+service_up user || { show_service user; fail "the watcher service is not running"; }
 check_preinstalled "" "$HOME/.guard"
 check_watcher "" "$HOME/.guard"
 end
@@ -209,7 +218,7 @@ if [ "$OS" = Linux ]; then
     sudo test -s $sys_home/install.json || fail "guard install wrote no install.json"
     sudo grep -q "$HOME/Downloads" $sys_home/watcher.config.json \
         || fail "the root service does not watch $HOME/Downloads"
-    service_running system || { show_service system; fail "guard.service is not running"; }
+    service_up system || { show_service system; fail "guard.service is not running"; }
     check_preinstalled sudo $sys_home
     check_watcher sudo $sys_home
 else
