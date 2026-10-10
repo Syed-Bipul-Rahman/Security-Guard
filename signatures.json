@@ -96,6 +96,16 @@
       "requires": "_0x",
       "pattern": "\\bfunction\\s+a\\d{1,3}_0x[0-9a-f]{4,6}\\s*\\(",
       "desc": "javascript-obfuscator prefixed function (a0_0x...), used by the _0x loader wave"
+    },
+    {
+      "id": "hidden.padded.code",
+      "severity": "critical",
+      "category": "hidden-code",
+      "flags": "MULTILINE",
+      "applies_to": [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".vue", ".svelte",
+                     ".py", ".sh", ".bash", ".zsh", ".ps1", ".psm1"],
+      "pattern": "(?:^|[^\\x00-\\x20\\x7f])[ \\t]{150,}(?:[A-Za-z_$(\\[!;+~{'\"`\\\\-]|/[^/]).{0,60}",
+      "desc": "Code hidden after 150+ blanks, pushed off-screen in an editor (any names)"
     }
   ],
 
