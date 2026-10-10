@@ -1385,6 +1385,22 @@ fn env_loader_any_name() {
                 "scripts/setup.js",
                 "(async()=>{const k=atob(process.env.K1);const r=await fetch(k);const s=await r.text();@FN(s)();})();\n",
             ),
+            (
+                "src/indirect.js",
+                "(async()=>{const r=await fetch(atob(process.env.K2));(0, @EV)(await r.text())})();\n",
+            ),
+            (
+                "src/destructured.js",
+                "const { SESSION_KEY } = process.env;\n(async()=>{const r=await fetch(atob(SESSION_KEY));@EV(await r.text())})();\n",
+            ),
+            (
+                "src/aliased.js",
+                "const e = process.env;\n(async()=>{const u=atob(e.K3);const r=await fetch(u);@EV(await r.text())})();\n",
+            ),
+            (
+                "src/multiline.js",
+                "const {\n  A,\n  B\n} = process.env;\nconst k = Buffer.from(B, 'base64').toString();\naxios.get(k).then((r) => (0, @EV)(r.data));\n",
+            ),
             ("src/original.js", PAYLOAD),
         ],
     );
@@ -1398,10 +1414,17 @@ fn env_loader_any_name() {
         "vite.config.mjs",
         "jest.config.js",
         "scripts/setup.js",
+        "src/indirect.js",
     ] {
         let want = format!("{f} iife.env.fetch.eval");
         assert!(found.contains(&want), "{want} not in {found:#?}");
     }
+    // process.env copied out first, then decoded under another name
+    for f in ["src/destructured.js", "src/aliased.js", "src/multiline.js"] {
+        let want = format!("{f} iife.env.alias.fetch.eval");
+        assert!(found.contains(&want), "{want} not in {found:#?}");
+    }
+    assert!(!found.contains(&"src/original.js iife.env.alias.fetch.eval".to_string()));
     // the original is reported by the literal rules only, as before
     assert!(found.contains(&"src/original.js iife.combo".to_string()));
     assert!(!found.contains(&"src/original.js iife.env.fetch.eval".to_string()));
@@ -1462,6 +1485,18 @@ fn env_loader_near_misses() {
             (
                 "src/order.js",
                 "@EV(code);\nconst t = atob(process.env.T);\nfetch(t);\n",
+            ),
+            (
+                "src/destructured-auth.js",
+                "const { API_KEY } = process.env;\nconst auth = atob(API_KEY);\nfetch(url, { headers: { a: auth } }).then((r) => r.json());\n",
+            ),
+            (
+                "src/indirect-literal.js",
+                "const { T } = process.env;\nconst x = atob(T);\nfetch(x);\nconst y = (0, @EV)('1 + 1');\n",
+            ),
+            (
+                "src/env-config.js",
+                "const env = process.env;\nmodule.exports = { port: env.PORT };\n",
             ),
         ],
     );
