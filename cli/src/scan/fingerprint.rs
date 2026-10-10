@@ -82,6 +82,8 @@ struct Combo {
 
 struct Rx {
     id: String,
+    /// path suffixes or file names the regex is limited to (empty: any file)
+    applies_to: Vec<String>,
     severity: String,
     category: String,
     desc: String,
@@ -148,8 +150,12 @@ impl Matcher {
         }
         for r in list(sig.get("regexes")) {
             let flags = r.get("flags").map(pystr::py_str).unwrap_or_default();
+            let applies = r
+                .get("applies_to")
+                .filter(|v| crate::pyjson::truthy(Some(v)));
             m.regexes.push(Rx {
                 id: req_str(r, "id")?,
+                applies_to: str_list(applies)?,
                 severity: req_str(r, "severity")?,
                 category: category(r),
                 desc: req_str(r, "desc")?,
@@ -174,12 +180,12 @@ impl Matcher {
         skip_path(&self.skip_prefixes, path)
     }
 
-    fn applies(lit: &Literal, path: &str) -> bool {
-        if lit.applies_to.is_empty() {
+    fn applies(applies_to: &[String], path: &str) -> bool {
+        if applies_to.is_empty() {
             return true;
         }
         let base = pystr::name(path);
-        lit.applies_to.iter().any(|a| {
+        applies_to.iter().any(|a| {
             let short = a.trim_start_matches(['.', '/']);
             path.ends_with(a.as_str())
                 || base == short.rsplit('/').next().unwrap_or("")
@@ -219,7 +225,7 @@ impl Matcher {
             }
         }
         for lit in &self.literals {
-            if !Self::applies(lit, path) {
+            if !Self::applies(&lit.applies_to, path) {
                 continue;
             }
             if content.contains(lit.value.as_str()) {
@@ -246,6 +252,9 @@ impl Matcher {
             }
         }
         for r in &self.regexes {
+            if !Self::applies(&r.applies_to, path) {
+                continue;
+            }
             if let Some(req) = &r.requires {
                 if !content.contains(req.as_str()) {
                     continue;
@@ -255,7 +264,7 @@ impl Matcher {
                 continue;
             }
             if let Some(m) = r.re.find(content) {
-                let ev = py::head(m.as_str(), 80).replace('\n', "\\n");
+                let ev = py::head(&squeeze_blanks(m.as_str()), 80).replace('\n', "\\n");
                 out.push(Finding::new(
                     path,
                     &r.id,
@@ -315,6 +324,14 @@ pub fn skip_path(prefixes: &[String], path: &str) -> bool {
 }
 
 /// Up to 40 characters either side of the first `needle`, newlines escaped.
+/// Long runs of blanks (padding that pushes code off-screen) shown as a
+/// count, so the evidence shows the code after them.
+fn squeeze_blanks(s: &str) -> std::borrow::Cow<'_, str> {
+    static BLANKS: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"[ \t]{20,}").unwrap());
+    BLANKS.replace_all(s, |c: &regex::Captures| format!("[{} blanks]", c[0].len()))
+}
+
 fn snippet(text: &str, needle: &str) -> String {
     let Some(i) = text.find(needle) else {
         return String::new();

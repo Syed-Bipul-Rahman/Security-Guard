@@ -356,6 +356,13 @@ pushed off-screen by hundreds of spaces and tagged with a short campaign marker,
 and plants a base64 C2 URL in `.env`. Guard flags every marker variant, and
 `guard clean` cuts the loader off and keeps the config.
 
+Markers and names can change, so Guard also flags any script (JavaScript,
+TypeScript, Python, shell, PowerShell) with code hidden after 150 or more
+spaces or tabs, whatever the code is called or however its strings are split.
+No real code in a sweep of about 70,000 such files did that. In JavaScript and
+TypeScript, `guard clean` and the watcher cut the hidden code out and keep the
+rest of the file; other files are quarantined, and `guard restore` undoes either.
+
 ---
 
 ## License

