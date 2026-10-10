@@ -525,11 +525,10 @@ fn hash_lists() {
     golden(SUITE, "hash_lists", &report(&out, &norm(&tmp)));
 }
 
-/// A file listed as merely suspicious by hash (a whole-file detection) does
-/// not make a malicious rule hit in a source file a quarantine
-/// (test_av_engine.py test_action_hint_cases).
+/// A malicious rule hit in a source file is quarantined like any other hit:
+/// there is no review state (was test_av_engine.py test_action_hint_cases).
 #[test]
-fn suspicious_whole_file_hit_is_still_review() {
+fn source_file_hit_is_quarantined() {
     let tmp = Tmp::new("review");
     let shell = sample("webshell_eval.php");
     let f = write(&tmp.join("c/index.php"), &shell);
@@ -543,11 +542,11 @@ fn suspicious_whole_file_hit_is_still_review() {
     let r = get(&results(&out), "index.php");
     assert_eq!(
         (r["verdict"].as_str(), r["action"].as_str()),
-        (Some("malicious"), Some("review"))
+        (Some("malicious"), Some("quarantine"))
     );
     golden(
         SUITE,
-        "suspicious_whole_file_hit_is_still_review",
+        "source_file_hit_is_quarantined",
         &report(&out, &norm(&tmp)),
     );
 }
@@ -1311,7 +1310,7 @@ fn scan_av_bucket() {
             by("pool.json")["severity"].as_str(),
             by("pool.json")["action"].as_str()
         ),
-        (Some("medium"), Some(""))
+        (Some("medium"), Some("quarantine"))
     );
     assert_eq!(by("bundle.zip")["threat"], "EICAR-Test-File");
     assert_eq!(tree["infected"], true);
@@ -1487,9 +1486,8 @@ fn clean_norm(tmp: &Tmp, work: &Path) -> Norm {
 }
 
 /// test_remediation_and_crypto.py test_clean_repo_end_to_end: each finding
-/// goes its own way — the injected config is cut, droppers and av
-/// quarantine hits are moved out, a webshell in source is left for review,
-/// and a second run has nothing left to do.
+/// goes its own way — the injected config is cut, droppers, av hits and a
+/// webshell in source are quarantined, and a second run has nothing left to do.
 #[test]
 fn clean_repo_routes_findings() {
     let tmp = Tmp::new("clean-routes");
@@ -1528,15 +1526,15 @@ fn clean_repo_routes_findings() {
         "public/fonts/fa-solid-400.woff2",
         "tools/eicar.com",
         "img/logo.png",
+        "web/shell.php",
     ] {
         assert!(has("quarantined", q), "{q}: {sum}");
     }
-    assert!(has("manual", "web/shell.php"));
     assert!(
         has("config_cleaned", ".vscode/settings.json")
             && has("config_cleaned", ".vscode/tasks.json")
     );
-    assert!(w.join("web/shell.php").exists());
+    assert!(!w.join("web/shell.php").exists());
     let second = g(&tmp, &["clean", &s(&w)]).run();
     let start = second.stdout.find("{\n").expect("a JSON summary");
     let again = parse_json(&second.stdout[start..]);
@@ -1557,9 +1555,9 @@ fn clean_repo_routes_findings() {
     );
 }
 
-/// `guard clean <file>` edge cases of test_remediation_and_crypto.py: source
-/// files are never deleted, broken or odd VS Code files are left alone, a
-/// task is malicious only when it runs on folder open.
+/// `guard clean <file>` edge cases of test_remediation_and_crypto.py: clean
+/// source files are left alone, broken or odd VS Code files too, and every
+/// task that runs on folder open or names a dropper-like command goes.
 #[test]
 fn clean_single_file_edge_cases() {
     let tmp = Tmp::new("clean-edges");
@@ -1614,25 +1612,17 @@ fn clean_single_file_edge_cases() {
         .iter()
         .map(|t| t.get("label").cloned().unwrap_or_else(|| t.clone()))
         .collect();
-    assert_eq!(
-        labels,
-        [
-            json!("ok"),
-            json!("auto-but-benign"),
-            json!("no-auto"),
-            json!("junk")
-        ]
-    );
+    assert_eq!(labels, [json!("ok"), json!("junk")]);
     all.push_str(&format!("--- tree\n{}", tree_listing(&w)));
     golden(SUITE, "clean_single_file_edge_cases", &all);
 }
 
 // ------------------------------------------------------------------ watch
-/// test_integration.py: on a watcher pass, a clean file and a suspicious
-/// (PUA) one are left alone without an alert; a malicious hit inside a source
-/// file is alerted on but never deleted.
+/// test_integration.py: on a watcher pass a clean file is left alone, while a
+/// suspicious (PUA) file and a malicious hit inside a source file are both
+/// alerted on and quarantined.
 #[test]
-fn watch_alerts_but_keeps_source() {
+fn watch_quarantines_flagged_files() {
     let tmp = Tmp::new("watch-av");
     let w = tmp.join("w");
     write(&w.join("Downloads/notes.txt"), "hello");
@@ -1660,14 +1650,12 @@ fn watch_alerts_but_keeps_source() {
             v
         })
         .collect();
-    assert_eq!(alerts.len(), 1, "{alerts:?}");
-    assert!(alerts[0]["path"].as_str().unwrap().ends_with("index.php"));
-    for f in [
-        "Downloads/notes.txt",
-        "Downloads/pool.json",
-        "site/index.php",
-    ] {
-        assert!(w.join(f).exists(), "{f}");
+    assert_eq!(alerts.len(), 2, "{alerts:?}");
+    assert!(alerts[0]["path"].as_str().unwrap().ends_with("pool.json"));
+    assert!(alerts[1]["path"].as_str().unwrap().ends_with("index.php"));
+    assert!(w.join("Downloads/notes.txt").exists());
+    for f in ["Downloads/pool.json", "site/index.php"] {
+        assert!(!w.join(f).exists(), "{f}");
     }
     let n = Norm::new()
         .path(&w, "W")
@@ -1675,7 +1663,7 @@ fn watch_alerts_but_keeps_source() {
         .path(&tmp.path, "TMP");
     golden(
         SUITE,
-        "watch_alerts_but_keeps_source",
+        "watch_quarantines_flagged_files",
         &format!(
             "--- alerts\n{}--- tree\n{}",
             n.apply(&canon_json(&Value::Array(alerts))),

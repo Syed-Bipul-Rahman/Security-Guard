@@ -631,7 +631,7 @@ impl Watcher {
         let (_, vf) = self.scanner.vscode.is_safe_to_open(repo);
         let crit: Vec<Value> = vf
             .iter()
-            .filter(|f| f.severity == "critical")
+            .filter(|f| matches!(f.severity, "critical" | "high"))
             .map(|f| Value::String(f.to_string()))
             .collect();
         let any_vs = !crit.is_empty();
@@ -643,7 +643,7 @@ impl Watcher {
         let tree_crit: Vec<Value> = ["magic", "fingerprint", "av"]
             .iter()
             .flat_map(|b| results[*b].as_array().cloned().unwrap_or_default())
-            .filter(|x| x.get("severity").and_then(Value::as_str) == Some("critical"))
+            .filter(crate::scan::remediate::crit)
             .collect();
         let any_tree = !tree_crit.is_empty();
         if any_tree {
@@ -690,18 +690,26 @@ impl Watcher {
                 .matcher
                 .scan_content(path, &content)
                 .iter()
-                .filter(|f| f.severity == "critical")
+                .filter(|f| {
+                    matches!(f.severity.as_str(), "critical" | "high") && f.sig_id != "wf.name"
+                })
                 .map(|f| Value::String(f.to_string()))
                 .collect()
         };
         if let Some(hit) = self.scanner.av_scan_file(path, path) {
-            if hit["severity"] == "critical" {
+            // malicious or suspicious: either way it is quarantined
+            {
                 findings.push(Value::String(format!(
-                    "[CRITICAL] {path}: {} ({})",
+                    "[{}] {path}: {} ({})",
+                    pystr::py_str(&hit["severity"]).to_uppercase(),
                     pystr::py_str(&hit["threat"]),
                     pystr::py_str(&hit["sig_id"])
                 )));
-                if hit["action"] == "quarantine" && self.remediate {
+                // a script gets the excise attempt below; anything else goes whole
+                if hit["action"] == "quarantine"
+                    && self.remediate
+                    && !crate::scan::remediate::SCRIPT_EXTS.contains(&ext.as_str())
+                {
                     let n = findings.len();
                     self.alert("new-file", path, findings);
                     self.remediate_file(path, n, true);

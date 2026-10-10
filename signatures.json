@@ -21,11 +21,15 @@
     { "id": "ioc.c2.domain",   "severity": "critical", "value": "auth-confirm-ten.vercel.app", "desc": "Attacker C2 host" },
     { "id": "ioc.c2.url",      "severity": "critical", "value": "https://auth-confirm-ten.vercel.app/api", "desc": "Full C2 endpoint (decoded AUTH_API_KEY)" },
     { "id": "ioc.exfil.ip",    "severity": "critical", "value": "45.139.104.115", "desc": "Exfil server IP" },
-    { "id": "ioc.exfil.domain","severity": "critical", "value": "carte-avantage.com", "desc": "Exfil server domain" }
+    { "id": "ioc.exfil.domain","severity": "critical", "value": "carte-avantage.com", "desc": "Exfil server domain" },
+    { "id": "ioc.c2.domain.2", "severity": "critical", "value": "auth-confirm-eight.vercel.app", "desc": "Attacker C2 host (_0x loader wave)" },
+    { "id": "ioc.stage2.url",  "severity": "critical", "value": "files.catbox.moe/odfwrl.js", "desc": "Second-stage payload URL (_0x loader wave)" }
   ],
 
   "literals": [
     { "id": "env.auth.b64",     "severity": "critical", "category": "env-c2",   "value": "aHR0cHM6Ly9hdXRoLWNvbmZpcm0tdGVuLnZlcmNlbC5hcHAvYXBp", "desc": "Base64 C2 URL planted as AUTH_API_KEY", "applies_to": [".env"] },
+    { "id": "env.auth.b64.2",   "severity": "critical", "category": "env-c2",   "value": "aHR0cHM6Ly9hdXRoLWNvbmZpcm0tZWlnaHQudmVyY2VsLmFwcC9hcGk", "desc": "Base64 C2 URL planted in .env (_0x loader wave)", "applies_to": [".env"] },
+    { "id": "env.stage2.b64",   "severity": "critical", "category": "env-c2",   "value": "aHR0cHM6Ly9maWxlcy5jYXRib3gubW9lL29kZndybC5qcw", "desc": "Base64 second-stage URL planted in .env", "applies_to": [".env"] },
     { "id": "iife.marker.eval", "severity": "critical", "category": "eval-iife", "value": "eval(proxyInfo)", "desc": "eval of remotely-fetched payload" },
     { "id": "iife.marker.atob", "severity": "critical", "category": "eval-iife", "value": "atob(process.env.AUTH_API_KEY)", "desc": "Runtime decode of C2 URL from env" },
     { "id": "payload.fp.1", "severity": "critical", "category": "obfuscated-c2", "value": "global['!']='9'", "desc": "Obfuscator bootstrap (single-quote)" },
@@ -62,6 +66,46 @@
       "requires": "proxyInfo",
       "pattern": "\\n?\\s*\\(async\\s*\\(\\)\\s*=>\\s*\\{.*?atob\\s*\\(\\s*process\\.env\\.AUTH_API_KEY\\s*\\).*?eval\\s*\\(\\s*proxyInfo\\s*\\).*?\\}\\s*\\)\\s*\\(\\s*\\)\\s*;",
       "desc": "Async IIFE: atob(AUTH_API_KEY) ... eval(proxyInfo) ... }();"
+    },
+    {
+      "id": "payload.marker.bang.sq",
+      "severity": "critical",
+      "category": "obfuscated-c2",
+      "requires": "global['!']",
+      "pattern": "\\bglobal\\['!'\\]\\s*=\\s*'\\d{1,3}(?:-[0-9*]{1,6}){1,3}'",
+      "desc": "Loader bootstrap marker global['!']='N-NNNN' (single-quote)"
+    },
+    {
+      "id": "payload.marker.bang.dq",
+      "severity": "critical",
+      "category": "obfuscated-c2",
+      "requires": "global[\"!\"]",
+      "pattern": "\\bglobal\\[\"!\"\\]\\s*=\\s*\"\\d{1,3}(?:-[0-9*]{1,6}){1,3}\"",
+      "desc": "Loader bootstrap marker global[\"!\"]=\"N-NNNN\" (double-quote)"
+    },
+    {
+      "id": "payload.marker.gi",
+      "severity": "critical",
+      "category": "obfuscated-c2",
+      "requires": "global.i",
+      "pattern": "\\bglobal\\.i\\s*=\\s*[\"']A\\d{1,3}-[0-9*]{1,6}(?:-\\d{1,3})?[\"']",
+      "desc": "Loader bootstrap marker global.i=\"AN-NNNN\""
+    },
+    {
+      "id": "payload.loader.0x",
+      "severity": "critical",
+      "category": "obfuscated-c2",
+      "requires": "_0x",
+      "pattern": "\\bglobal(?:\\['!'\\]|\\[\"!\"\\]|\\.i)\\s*=\\s*['\"][^'\"\\r\\n]{1,16}['\"]\\s*;\\s*(?:(?:var|let|const)\\s+_0x[0-9a-f]{4,6}\\s*=\\s*_0x[0-9a-f]{4,6}\\s*;\\s*)?(?:\\(function\\s*\\(\\s*_0x[0-9a-f]{4,6}|function\\s+(?:a\\d{1,3})?_0x[0-9a-f]{4,6}\\s*\\()",
+      "desc": "Loader marker followed directly by a javascript-obfuscator _0x wrapper"
+    },
+    {
+      "id": "payload.loader.prefixed",
+      "severity": "critical",
+      "category": "obfuscated-c2",
+      "requires": "_0x",
+      "pattern": "\\bfunction\\s+a\\d{1,3}_0x[0-9a-f]{4,6}\\s*\\(",
+      "desc": "javascript-obfuscator prefixed function (a0_0x...), used by the _0x loader wave"
     }
   ],
 
